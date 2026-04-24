@@ -207,22 +207,7 @@ export default function App() {
 
   async function confirmDeletePot(){ await supabase.from('pots').delete().eq('id',deletePotId); await loadAll(); setDeletePotId(null); }
 
-  async function savePotTx(){
-    if(!potTxForm.amount||isNaN(+potTxForm.amount)||+potTxForm.amount<=0) return;
-    const amt=parseFloat(potTxForm.amount);
-    const newAmount=potTxForm.type==='depot'?potTxModal.current_amount+amt:Math.max(0,potTxModal.current_amount-amt);
-    // Mouvement pot
-    await supabase.from('pot_transactions').insert({user_id:user.id,pot_id:potTxModal.id,type:potTxForm.type,amount:amt,description:potTxForm.description,date:potTxForm.date,is_recurring:potTxForm.is_recurring,recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null});
-    // Mise à jour solde pot
-    await supabase.from('pots').update({current_amount:newAmount}).eq('id',potTxModal.id);
-    // Impact budget : dépôt = dépense, retrait = revenu
-    const catId=categories.depenses.find(c=>c.name===potTxModal.name)?.id||categories.depenses[0]?.id;
-    await supabase.from('transactions').insert({
-      user_id:user.id,
-      category_id:catId,
-      type:potTxForm.type==='depot'?'depenses':'revenus',
-      amount:amt,
-      description:`${potTxForm.type==='depot'?'Dépôt':'Retrait'} — ${potTxModal.name}${potTxForm.description?` (${potTxForm.description})`:''}`,
+.name}${potTxForm.description?` (${potTxForm.description})`:''}`,
       date:potTxForm.date,
       is_recurring:potTxForm.is_recurring,
       recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
