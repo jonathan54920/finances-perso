@@ -132,8 +132,15 @@ export default function App() {
     return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;
   }),[transactions,filterMonth,filterYear]);
 
-  const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0);
-  const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0);
+  const filteredPotTx=useMemo(()=>potTx.filter(t=>{
+    const d=new Date(t.date);
+    return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;
+  }),[potTx,filterMonth,filterYear]);
+
+  const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0)
+    + filteredPotTx.filter(t=>t.type==='retrait').reduce((s,t)=>s+t.amount,0);
+  const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0)
+    + filteredPotTx.filter(t=>t.type==='depot').reduce((s,t)=>s+t.amount,0);
   const solde=totalRev-totalDep;
 
   const depBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='depenses').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
@@ -239,42 +246,13 @@ export default function App() {
     const newAmount=potTxForm.type==='depot'
       ? potTxModal.current_amount+amt
       : Math.max(0,potTxModal.current_amount-amt);
-
-    // Enregistre mouvement pot
     await supabase.from('pot_transactions').insert({
-      user_id:user.id,
-      pot_id:potTxModal.id,
-      type:potTxForm.type,
-      amount:amt,
-      description:potTxForm.description,
-      date:potTxForm.date,
+      user_id:user.id, pot_id:potTxModal.id, type:potTxForm.type,
+      amount:amt, description:potTxForm.description, date:potTxForm.date,
       is_recurring:potTxForm.is_recurring,
       recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
     });
-
-    // Met à jour solde pot
     await supabase.from('pots').update({current_amount:newAmount}).eq('id',potTxModal.id);
-
-    // Dépôt = dépense / Retrait = revenu
-    const txType = potTxForm.type==='depot'?'depenses':'revenus';
-    const cat = await getOrCreateCat(potTxModal.name, txType, potTxModal.color||PALETTE[0]);
-
-    if(cat){
-      const desc = potTxForm.type==='depot'
-        ? 'Dépôt — '+potTxModal.name+(potTxForm.description?' ('+potTxForm.description+')':'')
-        : 'Retrait — '+potTxModal.name+(potTxForm.description?' ('+potTxForm.description+')':'');
-      await supabase.from('transactions').insert({
-        user_id:user.id,
-        category_id:cat.id,
-        type:txType,
-        amount:amt,
-        description:desc,
-        date:potTxForm.date,
-        is_recurring:potTxForm.is_recurring,
-        recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
-      });
-    }
-
     await loadAll();
     setPotTxModal(null);
     setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
