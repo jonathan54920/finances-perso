@@ -100,7 +100,7 @@ export default function App() {
   useEffect(() => {
     if (!user) { setLoading(false); return; }
     loadAll();
-  }, [user]);
+  }, [user, loadAll]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
     setLoading(true);
@@ -147,7 +147,7 @@ export default function App() {
   const depBycat = useMemo(()=>{const m={};filtered.filter(t=>t.type==='depenses').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
   const revBycat = useMemo(()=>{const m={};filtered.filter(t=>t.type==='revenus').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
 
-  const alerts = useMemo(()=>Object.entries(envelopes).filter(([id,b])=>b>0&&depBycat[id]>b).map(([id,b])=>({id,name:getCatName(id),budget:b,spent:depBycat[id],over:depBycat[id]-b})),[envelopes,depBycat]);
+  const alerts = useMemo(()=>Object.entries(envelopes).filter(([id,b])=>b>0&&depBycat[id]>b).map(([id,b])=>({id,name:getCatName(id),budget:b,spent:depBycat[id],over:depBycat[id]-b})),[envelopes,depBycat]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const monthly = useMemo(()=>{
     const m={};
