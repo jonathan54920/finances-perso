@@ -40,7 +40,7 @@ function AuthScreen({ onAuth }) {
           <label style={{fontSize:13,color:'var(--color-muted)',display:'block',marginBottom:4}}>Mot de passe</label>
           <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required placeholder="••••••••" style={{...inp,marginBottom:16}}/>
           {error&&<div style={{fontSize:12,color:'#D85A30',marginBottom:12,padding:'8px 12px',background:'rgba(216,90,48,.08)',borderRadius:8}}>{error}</div>}
-          <button type="submit" disabled={loading} style={{width:'100%',padding:'11px',borderRadius:10,border:'none',background:'#534AB7',color:'#fff',fontSize:15,fontWeight:600,cursor:'pointer',opacity:loading?.6:1}}>
+          <button type="submit" disabled={loading} style={{width:'100%',padding:'11px',borderRadius:10,border:'none',background:'#534AB7',color:'#fff',fontSize:15,fontWeight:600,cursor:'pointer',opacity:loading?0.6:1}}>
             {loading?'...':(mode==='login'?'Se connecter':'Créer le compte')}
           </button>
         </form>
@@ -77,9 +77,9 @@ export default function App() {
   const [newCatErr,setNewCatErr]=useState('');
   const [envModal,setEnvModal]=useState(null);
   const [envValue,setEnvValue]=useState('');
-  const [potModal,setPotModal]=useState(null); // null | 'new' | {pot} pour edit
+  const [potModal,setPotModal]=useState(null);
   const [potForm,setPotForm]=useState({name:'',color:PALETTE[0],target_amount:'',current_amount:''});
-  const [potTxModal,setPotTxModal]=useState(null); // pot object
+  const [potTxModal,setPotTxModal]=useState(null);
   const [potTxForm,setPotTxForm]=useState({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
   const [deletePotId,setDeletePotId]=useState(null);
 
@@ -95,7 +95,7 @@ export default function App() {
     const [cats,txs,envs,potsRes,potTxRes]=await Promise.all([
       supabase.from('categories').select('*').eq('user_id',user.id).order('created_at'),
       supabase.from('transactions').select('*, categories(name,type,color)').eq('user_id',user.id).order('date',{ascending:false}),
-      supabase.from('envelopes').select('*, categories(name)').eq('user_id',user.id),
+      supabase.from('envelopes').select('*').eq('user_id',user.id),
       supabase.from('pots').select('*').eq('user_id',user.id).order('created_at'),
       supabase.from('pot_transactions').select('*').eq('user_id',user.id).order('date',{ascending:false}),
     ]);
@@ -104,7 +104,17 @@ export default function App() {
     setCategories({revenus:revCats,depenses:depCats});
     const cm={};(cats.data||[]).forEach(c=>{cm[c.id]=c.color;});
     setColorMap(cm);
-    setTransactions((txs.data||[]).map(t=>({id:t.id,type:t.categories?.type||t.type,categorie:t.category_id,categorieName:t.categories?.name||'',montant:t.amount,description:t.description||'',date:t.date,is_recurring:t.is_recurring,recurring_day:t.recurring_day})));
+    setTransactions((txs.data||[]).map(t=>({
+      id:t.id,
+      type:t.categories?.type||t.type,
+      categorie:t.category_id,
+      categorieName:t.categories?.name||'',
+      montant:t.amount,
+      description:t.description||'',
+      date:t.date,
+      is_recurring:t.is_recurring,
+      recurring_day:t.recurring_day
+    })));
     const em={};(envs.data||[]).forEach(e=>{em[e.category_id]=e.amount;});
     setEnvelopes(em);
     setPots(potsRes.data||[]);
@@ -117,7 +127,11 @@ export default function App() {
   const getCatName=id=>{const all=[...categories.revenus,...categories.depenses];return all.find(c=>c.id===id)?.name||'';};
   const getCatColor=id=>colorMap[id]||PALETTE[0];
 
-  const filtered=useMemo(()=>transactions.filter(t=>{const d=new Date(t.date);return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;}),[transactions,filterMonth,filterYear]);
+  const filtered=useMemo(()=>transactions.filter(t=>{
+    const d=new Date(t.date);
+    return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;
+  }),[transactions,filterMonth,filterYear]);
+
   const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0);
   const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0);
   const solde=totalRev-totalDep;
@@ -125,19 +139,16 @@ export default function App() {
   const depBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='depenses').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
   const revBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='revenus').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
 
-  // Report enveloppes : cumule les surplus des mois précédents
   const envelopeWithCarry=useMemo(()=>{
     const result={};
     Object.entries(envelopes).forEach(([catId,budget])=>{
       let carry=0;
       for(let y=filterYear-1;y<=filterYear;y++){
-        const startM=y===filterYear-1?0:0;
-        const endM=y===filterYear?filterMonth:11;
-        for(let m=startM;m<=endM;m++){
+        for(let m=0;m<=11;m++){
           if(y===filterYear&&m===filterMonth) break;
+          if(y===filterYear-1&&m<filterMonth) continue;
           const spent=transactions.filter(t=>t.type==='depenses'&&t.categorie===catId&&new Date(t.date).getMonth()===m&&new Date(t.date).getFullYear()===y).reduce((s,t)=>s+t.montant,0);
-          const surplus=budget-spent;
-          carry+=surplus;
+          carry+=budget-spent;
         }
       }
       result[catId]={budget,carry:Math.max(0,carry),total:budget+Math.max(0,carry)};
@@ -145,7 +156,8 @@ export default function App() {
     return result;
   },[envelopes,transactions,filterMonth,filterYear]);
 
-  const alerts=useMemo(()=>Object.entries(envelopeWithCarry).filter(([id,e])=>e.total>0&&(depBycat[id]||0)>e.total).map(([id,e])=>({id,name:getCatName(id),budget:e.total,spent:depBycat[id]||0,over:(depBycat[id]||0)-e.total})),[envelopeWithCarry,depBycat]); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const alerts=useMemo(()=>Object.entries(envelopeWithCarry).filter(([id,e])=>e.total>0&&(depBycat[id]||0)>e.total).map(([id,e])=>({id,name:getCatName(id),budget:e.total,spent:depBycat[id]||0,over:(depBycat[id]||0)-e.total})),[envelopeWithCarry,depBycat]);
 
   const monthly=useMemo(()=>{
     const m={};
@@ -207,11 +219,62 @@ export default function App() {
 
   async function confirmDeletePot(){ await supabase.from('pots').delete().eq('id',deletePotId); await loadAll(); setDeletePotId(null); }
 
-.name}${potTxForm.description?` (${potTxForm.description})`:''}`,
+  async function getOrCreateCat(name, type, color){
+    const list = type==='depenses'?categories.depenses:categories.revenus;
+    let cat = list.find(c=>c.name===name);
+    if(!cat){
+      const {data}=await supabase.from('categories').insert({user_id:user.id,name,type,color}).select().single();
+      if(data){
+        cat={id:data.id,name:data.name,color:data.color};
+        setCategories(prev=>({...prev,[type]:[...prev[type],cat]}));
+        setColorMap(prev=>({...prev,[data.id]:data.color}));
+      }
+    }
+    return cat;
+  }
+
+  async function savePotTx(){
+    if(!potTxForm.amount||isNaN(+potTxForm.amount)||+potTxForm.amount<=0) return;
+    const amt=parseFloat(potTxForm.amount);
+    const newAmount=potTxForm.type==='depot'
+      ? potTxModal.current_amount+amt
+      : Math.max(0,potTxModal.current_amount-amt);
+
+    // Enregistre mouvement pot
+    await supabase.from('pot_transactions').insert({
+      user_id:user.id,
+      pot_id:potTxModal.id,
+      type:potTxForm.type,
+      amount:amt,
+      description:potTxForm.description,
       date:potTxForm.date,
       is_recurring:potTxForm.is_recurring,
       recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
     });
+
+    // Met à jour solde pot
+    await supabase.from('pots').update({current_amount:newAmount}).eq('id',potTxModal.id);
+
+    // Dépôt = dépense / Retrait = revenu
+    const txType = potTxForm.type==='depot'?'depenses':'revenus';
+    const cat = await getOrCreateCat(potTxModal.name, txType, potTxModal.color||PALETTE[0]);
+
+    if(cat){
+      const desc = potTxForm.type==='depot'
+        ? 'Dépôt — '+potTxModal.name+(potTxForm.description?' ('+potTxForm.description+')':'')
+        : 'Retrait — '+potTxModal.name+(potTxForm.description?' ('+potTxForm.description+')':'');
+      await supabase.from('transactions').insert({
+        user_id:user.id,
+        category_id:cat.id,
+        type:txType,
+        amount:amt,
+        description:desc,
+        date:potTxForm.date,
+        is_recurring:potTxForm.is_recurring,
+        recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
+      });
+    }
+
     await loadAll();
     setPotTxModal(null);
     setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
@@ -346,7 +409,7 @@ export default function App() {
         </div>)}
 
         {/* Résumé catégories */}
-        <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem'}}>
+        <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:14}}>Résumé par catégorie</div>
           {categories.revenus.filter(c=>revBycat[c.id]).length===0&&categories.depenses.filter(c=>depBycat[c.id]).length===0&&<div style={{fontSize:13,color:'var(--color-muted)'}}>Aucune transaction ce mois-ci.</div>}
           {categories.revenus.filter(c=>revBycat[c.id]).length>0&&(<div style={{marginBottom:14}}>
@@ -382,7 +445,7 @@ export default function App() {
         </div>
 
         {/* Export */}
-        <div style={{marginTop:14,background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem'}}>
+        <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem'}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>📥 Export Excel</div>
           <div style={{display:'flex',gap:8}}>
             <button onClick={()=>exportExcel('mois')} style={{flex:1,padding:'9px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:500,fontSize:13}}>Ce mois ({MS[filterMonth]})</button>
@@ -398,7 +461,6 @@ export default function App() {
           <button onClick={()=>{setPotForm({name:'',color:PALETTE[0],target_amount:'',current_amount:''});setPotModal('new');}} style={{padding:'6px 14px',borderRadius:10,border:'1.5px solid #534AB7',background:ha('#534AB7',.1),color:'#534AB7',cursor:'pointer',fontWeight:600,fontSize:13}}>+ Nouveau pot</button>
         </div>
 
-        {/* Total global */}
         {pots.length>0&&(<div style={{background:ha('#534AB7',.08),border:`1px solid ${ha('#534AB7',.2)}`,borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
             <span style={{fontSize:13,fontWeight:600,color:'#534AB7'}}>Total tous les pots</span>
@@ -506,7 +568,7 @@ export default function App() {
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
                 <div style={{fontSize:14,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.description||getCatName(t.categorie)}</div>
-                {t.is_recurring&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:ha('#534AB7',.1),color:'#534AB7'}}>🔄</span>}
+                {t.is_recurring&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:ha('#534AB7',.1),color:'#534AB7',flexShrink:0}}>🔄</span>}
               </div>
               <div style={{fontSize:12,color:'var(--color-muted)'}}>{getCatName(t.categorie)} · {new Date(t.date).toLocaleDateString('fr-FR')}</div>
             </div>
