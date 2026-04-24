@@ -149,19 +149,10 @@ export default function App() {
   const envelopeWithCarry=useMemo(()=>{
     const result={};
     Object.entries(envelopes).forEach(([catId,budget])=>{
-      let carry=0;
-      for(let y=filterYear-1;y<=filterYear;y++){
-        for(let m=0;m<=11;m++){
-          if(y===filterYear&&m===filterMonth) break;
-          if(y<filterYear&&m<0) continue;
-          const spent=transactions.filter(t=>t.type==='depenses'&&t.categorie===catId&&new Date(t.date).getMonth()===m&&new Date(t.date).getFullYear()===y).reduce((s,t)=>s+t.montant,0);
-          carry+=budget-spent;
-        }
-      }
-      result[catId]={budget,carry:Math.max(0,carry),total:budget+Math.max(0,carry)};
+      result[catId]={budget,carry:0,total:budget};
     });
     return result;
-  },[envelopes,transactions,filterMonth,filterYear]);
+  },[envelopes]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const alerts=useMemo(()=>Object.entries(envelopeWithCarry).filter(([id,e])=>e.total>0&&(depBycat[id]||0)>e.total).map(([id,e])=>({id,name:getCatName(id),budget:e.total,spent:depBycat[id]||0,over:(depBycat[id]||0)-e.total})),[envelopeWithCarry,depBycat]);
@@ -293,7 +284,7 @@ export default function App() {
       </div>
 
       <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
-        {[['accueil','🏠 Accueil'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions'],['saisie',editId?'✏️ Modifier':'✏️ Saisir']].map(([k,l])=>pill(l,view===k,()=>setView(k)))}
+        {[['accueil','🏠 Accueil'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions']].map(([k,l])=>pill(l,view===k,()=>setView(k)))}
       </div>
 
       {view!=='saisie'&&(
