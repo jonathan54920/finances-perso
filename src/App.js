@@ -31,7 +31,7 @@ function AuthScreen({ onAuth }) {
       <div style={{width:'100%',maxWidth:360,background:'var(--color-card)',borderRadius:16,padding:'2rem',boxShadow:'0 4px 24px rgba(0,0,0,.08)',border:'0.5px solid var(--color-border)'}}>
         <div style={{textAlign:'center',marginBottom:24}}>
           <div style={{fontSize:32,marginBottom:8}}>💰</div>
-          <div style={{fontSize:20,fontWeight:600,color:'var(--color-text)'}}>Finances personnelles</div>
+          <div style={{fontSize:20,fontWeight:600,color:'var(--color-text)'}}>JSJE Finances</div>
           <div style={{fontSize:13,color:'var(--color-muted)',marginTop:4}}>{mode==='login'?'Connexion':'Créer un compte'}</div>
         </div>
         <form onSubmit={handleSubmit}>
@@ -211,9 +211,25 @@ export default function App() {
     if(!potTxForm.amount||isNaN(+potTxForm.amount)||+potTxForm.amount<=0) return;
     const amt=parseFloat(potTxForm.amount);
     const newAmount=potTxForm.type==='depot'?potTxModal.current_amount+amt:Math.max(0,potTxModal.current_amount-amt);
+    // Mouvement pot
     await supabase.from('pot_transactions').insert({user_id:user.id,pot_id:potTxModal.id,type:potTxForm.type,amount:amt,description:potTxForm.description,date:potTxForm.date,is_recurring:potTxForm.is_recurring,recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null});
+    // Mise à jour solde pot
     await supabase.from('pots').update({current_amount:newAmount}).eq('id',potTxModal.id);
-    await loadAll(); setPotTxModal(null); setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
+    // Impact budget : dépôt = dépense, retrait = revenu
+    const catId=categories.depenses.find(c=>c.name===potTxModal.name)?.id||categories.depenses[0]?.id;
+    await supabase.from('transactions').insert({
+      user_id:user.id,
+      category_id:catId,
+      type:potTxForm.type==='depot'?'depenses':'revenus',
+      amount:amt,
+      description:`${potTxForm.type==='depot'?'Dépôt':'Retrait'} — ${potTxModal.name}${potTxForm.description?` (${potTxForm.description})`:''}`,
+      date:potTxForm.date,
+      is_recurring:potTxForm.is_recurring,
+      recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
+    });
+    await loadAll();
+    setPotTxModal(null);
+    setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
   }
 
   function exportExcel(period){
@@ -244,7 +260,7 @@ export default function App() {
       {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
         <div>
-          <div style={{fontSize:20,fontWeight:600,color:'var(--color-text)'}}>Finances personnelles</div>
+          <div style={{fontSize:20,fontWeight:600,color:'var(--color-text)'}}>JSJE Finances</div>
           <div style={{fontSize:13,color:'var(--color-muted)'}}>{MONTHS[filterMonth]} {filterYear}</div>
         </div>
         <div style={{display:'flex',gap:8}}>
