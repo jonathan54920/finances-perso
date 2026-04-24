@@ -100,7 +100,7 @@ export default function App() {
   useEffect(() => {
     if (!user) { setLoading(false); return; }
     loadAll();
-  }, [user, loadAll]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
     setLoading(true);
