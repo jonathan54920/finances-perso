@@ -138,9 +138,9 @@ export default function App() {
   }),[potTx,filterMonth,filterYear]);
 
   const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0)
-    + filteredPotTx.filter(t=>t.type==='retrait').reduce((s,t)=>s+t.amount,0);
+    +filteredPotTx.filter(t=>t.type==='retrait'||t.type==='retrait').reduce((s,t)=>s+t.amount,0);
   const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0)
-    + filteredPotTx.filter(t=>t.type==='depot').reduce((s,t)=>s+t.amount,0);
+    +filteredPotTx.filter(t=>t.type==='depot'||t.type==='dépôt').reduce((s,t)=>s+t.amount,0);
   const solde=totalRev-totalDep;
 
   const depBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='depenses').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
@@ -153,7 +153,7 @@ export default function App() {
       for(let y=filterYear-1;y<=filterYear;y++){
         for(let m=0;m<=11;m++){
           if(y===filterYear&&m===filterMonth) break;
-          if(y===filterYear-1&&m<filterMonth) continue;
+          if(y<filterYear&&m<0) continue;
           const spent=transactions.filter(t=>t.type==='depenses'&&t.categorie===catId&&new Date(t.date).getMonth()===m&&new Date(t.date).getFullYear()===y).reduce((s,t)=>s+t.montant,0);
           carry+=budget-spent;
         }
@@ -180,8 +180,18 @@ export default function App() {
   years.sort((a,b)=>b-a);
 
   async function handleSubmit(){
-    if(!form.montant||isNaN(+form.montant)||+form.montant<=0||!form.date||!form.categorie)return;
-    const payload={user_id:user.id,category_id:form.categorie,type:form.type,amount:parseFloat(form.montant),description:form.description.trim(),date:form.date,is_recurring:form.is_recurring,recurring_day:form.is_recurring?parseInt(form.recurring_day):null};
+    const catId = form.categorie || categories[form.type][0]?.id;
+    if(!form.montant||isNaN(+form.montant)||+form.montant<=0||!form.date||!catId) return;
+    const payload={
+      user_id:user.id,
+      category_id:catId,
+      type:form.type,
+      amount:parseFloat(form.montant),
+      description:form.description.trim(),
+      date:form.date,
+      is_recurring:form.is_recurring,
+      recurring_day:form.is_recurring?parseInt(form.recurring_day):null
+    };
     if(editId) await supabase.from('transactions').update(payload).eq('id',editId);
     else await supabase.from('transactions').insert(payload);
     await loadAll();
@@ -233,8 +243,12 @@ export default function App() {
       ? potTxModal.current_amount+amt
       : Math.max(0,potTxModal.current_amount-amt);
     await supabase.from('pot_transactions').insert({
-      user_id:user.id, pot_id:potTxModal.id, type:potTxForm.type,
-      amount:amt, description:potTxForm.description, date:potTxForm.date,
+      user_id:user.id,
+      pot_id:potTxModal.id,
+      type:potTxForm.type,
+      amount:amt,
+      description:potTxForm.description,
+      date:potTxForm.date,
       is_recurring:potTxForm.is_recurring,
       recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
     });
@@ -245,9 +259,7 @@ export default function App() {
   }
 
   function exportExcel(period){
-    const rows = period==='mois'
-      ? filtered
-      : transactions.filter(t=>new Date(t.date).getFullYear()===filterYear);
+    const rows=period==='mois'?filtered:transactions.filter(t=>new Date(t.date).getFullYear()===filterYear);
     const data=rows.map(t=>({'Date':t.date,'Type':t.type==='revenus'?'Revenu':'Dépense','Catégorie':getCatName(t.categorie),'Montant':t.montant,'Description':t.description,'Récurrent':t.is_recurring?'Oui':'Non'}));
     const ws=XLSX.utils.json_to_sheet(data);
     const wb=XLSX.utils.book_new();
@@ -269,7 +281,6 @@ export default function App() {
 
   return(
     <div style={{maxWidth:480,margin:'0 auto',padding:'1rem',paddingBottom:80}}>
-      {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
         <div>
           <div style={{fontSize:20,fontWeight:600,color:'var(--color-text)'}}>JSJE Finances</div>
@@ -281,12 +292,10 @@ export default function App() {
         </div>
       </div>
 
-      {/* Nav */}
       <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
         {[['accueil','🏠 Accueil'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions'],['saisie',editId?'✏️ Modifier':'✏️ Saisir']].map(([k,l])=>pill(l,view===k,()=>setView(k)))}
       </div>
 
-      {/* Filtre période */}
       {view!=='saisie'&&(
         <div style={{display:'flex',gap:5,marginBottom:18,flexWrap:'wrap',alignItems:'center'}}>
           <span style={{fontSize:11,color:'var(--color-muted)'}}>Période :</span>
@@ -295,7 +304,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ===== ACCUEIL ===== */}
+      {/* ACCUEIL */}
       {view==='accueil'&&(<div>
         {alerts.length>0&&<div style={{marginBottom:14}}>{alerts.map(a=>(
           <div key={a.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:12,background:ha('#D85A30',.08),border:'1.5px solid #D85A30',marginBottom:8}}>
@@ -305,7 +314,6 @@ export default function App() {
           </div>
         ))}</div>}
 
-        {/* 4 KPI */}
         {(()=>{
           const aRev=transactions.filter(t=>new Date(t.date).getFullYear()===filterYear&&t.type==='revenus').reduce((s,t)=>s+t.montant,0);
           const aDep=transactions.filter(t=>new Date(t.date).getFullYear()===filterYear&&t.type==='depenses').reduce((s,t)=>s+t.montant,0);
@@ -330,7 +338,6 @@ export default function App() {
           </div>);
         })()}
 
-        {/* Pots résumé */}
         {pots.length>0&&(<div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:600}}>🏦 Pots d'épargne</div>
@@ -352,7 +359,6 @@ export default function App() {
           <button onClick={()=>setView('pots')} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)',fontSize:13}}>Voir tous les pots →</button>
         </div>)}
 
-        {/* Graphique */}
         {monthly.length>0&&(<div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>Évolution 6 mois</div>
           <div style={{display:'flex',alignItems:'flex-end',gap:6,height:100}}>
@@ -372,7 +378,6 @@ export default function App() {
           </div>
         </div>)}
 
-        {/* Résumé catégories */}
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:14}}>Résumé par catégorie</div>
           {categories.revenus.filter(c=>revBycat[c.id]).length===0&&categories.depenses.filter(c=>depBycat[c.id]).length===0&&<div style={{fontSize:13,color:'var(--color-muted)'}}>Aucune transaction ce mois-ci.</div>}
@@ -408,7 +413,6 @@ export default function App() {
           </div>)}
         </div>
 
-        {/* Export */}
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem'}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>📥 Export Excel</div>
           <div style={{display:'flex',gap:8}}>
@@ -418,13 +422,12 @@ export default function App() {
         </div>
       </div>)}
 
-      {/* ===== POTS ===== */}
+      {/* POTS */}
       {view==='pots'&&(<div>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600}}>Pots d'épargne</div>
           <button onClick={()=>{setPotForm({name:'',color:PALETTE[0],target_amount:'',current_amount:''});setPotModal('new');}} style={{padding:'6px 14px',borderRadius:10,border:'1.5px solid #534AB7',background:ha('#534AB7',.1),color:'#534AB7',cursor:'pointer',fontWeight:600,fontSize:13}}>+ Nouveau pot</button>
         </div>
-
         {pots.length>0&&(<div style={{background:ha('#534AB7',.08),border:`1px solid ${ha('#534AB7',.2)}`,borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
             <span style={{fontSize:13,fontWeight:600,color:'#534AB7'}}>Total tous les pots</span>
@@ -433,9 +436,7 @@ export default function App() {
           {totalPotsTarget>0&&<><div style={{height:7,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:6}}><div style={{height:'100%',width:`${pct(totalPots,totalPotsTarget)}%`,background:'#534AB7',borderRadius:3}}/></div>
           <div style={{fontSize:12,color:'var(--color-muted)'}}>Objectif total : {fmt(totalPotsTarget)} · {pct(totalPots,totalPotsTarget)}% atteint</div></>}
         </div>)}
-
-        {pots.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucun pot créé. Crée ton premier pot !</div>}
-
+        {pots.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucun pot créé.</div>}
         {pots.map(pot=>{
           const p=pot.target_amount>0?pct(pot.current_amount,pot.target_amount):0;
           const txList=potTx.filter(t=>t.pot_id===pot.id).slice(0,3);
@@ -443,39 +444,31 @@ export default function App() {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div style={{width:36,height:36,borderRadius:'50%',background:ha(pot.color,.15),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:16,color:pot.color}}>{pot.name[0]}</div>
-                <div>
-                  <div style={{fontSize:14,fontWeight:600}}>{pot.name}</div>
-                  {pot.target_amount>0&&<div style={{fontSize:11,color:'var(--color-muted)'}}>Objectif : {fmt(pot.target_amount)}</div>}
-                </div>
+                <div><div style={{fontSize:14,fontWeight:600}}>{pot.name}</div>{pot.target_amount>0&&<div style={{fontSize:11,color:'var(--color-muted)'}}>Objectif : {fmt(pot.target_amount)}</div>}</div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
                 <div style={{fontSize:18,fontWeight:600,color:pot.color}}>{fmt(pot.current_amount)}</div>
-                <button onClick={()=>{setPotForm({name:pot.name,color:pot.color,target_amount:pot.target_amount||'',current_amount:pot.current_amount||''});setPotModal(pot);}} style={{width:26,height:26,borderRadius:'50%',border:'0.5px solid var(--color-border)',background:'var(--color-bg)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--color-muted)'}}>✏️</button>
+                <button onClick={()=>{setPotForm({name:pot.name,color:pot.color,target_amount:pot.target_amount||'',current_amount:pot.current_amount||''});setPotModal(pot);}} style={{width:26,height:26,borderRadius:'50%',border:'0.5px solid var(--color-border)',background:'var(--color-bg)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>✏️</button>
                 <button onClick={()=>setDeletePotId(pot.id)} style={{width:26,height:26,borderRadius:'50%',border:'0.5px solid var(--color-border)',background:'var(--color-bg)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:'#D85A30'}}>🗑</button>
               </div>
             </div>
-            {pot.target_amount>0&&(<div style={{marginBottom:10}}>
-              <div style={{height:7,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:4}}><div style={{height:'100%',width:`${p}%`,background:pot.color,borderRadius:3}}/></div>
-              <div style={{fontSize:11,color:'var(--color-muted)'}}>{p}% atteint · Reste {fmt(pot.target_amount-pot.current_amount)}</div>
-            </div>)}
+            {pot.target_amount>0&&(<div style={{marginBottom:10}}><div style={{height:7,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:4}}><div style={{height:'100%',width:`${p}%`,background:pot.color,borderRadius:3}}/></div><div style={{fontSize:11,color:'var(--color-muted)'}}>{p}% atteint · Reste {fmt(pot.target_amount-pot.current_amount)}</div></div>)}
             <div style={{display:'flex',gap:8,marginBottom:txList.length>0?10:0}}>
               <button onClick={()=>{setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});setPotTxModal(pot);}} style={{flex:1,padding:'8px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:500,fontSize:13}}>+ Dépôt</button>
               <button onClick={()=>{setPotTxForm({type:'retrait',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});setPotTxModal(pot);}} style={{flex:1,padding:'8px',borderRadius:10,border:'1.5px solid #D85A30',background:ha('#D85A30',.1),color:'#D85A30',cursor:'pointer',fontWeight:500,fontSize:13}}>- Retrait</button>
             </div>
             {txList.length>0&&(<div style={{borderTop:'0.5px solid var(--color-border)',paddingTop:8}}>
               <div style={{fontSize:11,color:'var(--color-muted)',marginBottom:6}}>Derniers mouvements</div>
-              {txList.map(t=>(
-                <div key={t.id} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
-                  <span style={{color:'var(--color-muted)'}}>{t.description||t.type} · {new Date(t.date).toLocaleDateString('fr-FR')}</span>
-                  <span style={{color:t.type==='depot'?'#1D9E75':'#D85A30',fontWeight:500}}>{t.type==='depot'?'+':'-'}{fmt(t.amount)}</span>
-                </div>
-              ))}
+              {txList.map(t=>(<div key={t.id} style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
+                <span style={{color:'var(--color-muted)'}}>{t.description||t.type} · {new Date(t.date).toLocaleDateString('fr-FR')}</span>
+                <span style={{color:t.type==='depot'?'#1D9E75':'#D85A30',fontWeight:500}}>{t.type==='depot'?'+':'-'}{fmt(t.amount)}</span>
+              </div>))}
             </div>)}
           </div>);
         })}
       </div>)}
 
-      {/* ===== CATÉGORIES ===== */}
+      {/* CATÉGORIES */}
       {view==='categories'&&(<div>
         {[...categories.revenus,...categories.depenses].filter(c=>depBycat[c.id]||revBycat[c.id]).map(cat=>{
           const rev=revBycat[cat.id]||0;const dep=depBycat[cat.id]||0;const s=rev-dep;
@@ -484,8 +477,7 @@ export default function App() {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div style={{width:32,height:32,borderRadius:'50%',background:ha(cat.color,.15),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:13,color:cat.color}}>{cat.name[0]}</div>
-                <div><div style={{fontSize:14,fontWeight:600}}>{cat.name}</div>
-                <div style={{fontSize:11,color:'var(--color-muted)'}}>{budget>0?`Budget : ${fmt(envelopes[cat.id])}/mois${env?.carry>0?` + report ${fmt(env.carry)}`:''}`:"Pas d'enveloppe"}</div></div>
+                <div><div style={{fontSize:14,fontWeight:600}}>{cat.name}</div><div style={{fontSize:11,color:'var(--color-muted)'}}>{budget>0?`Budget : ${fmt(envelopes[cat.id])}/mois${env?.carry>0?` + report ${fmt(env.carry)}`:''}`:"Pas d'enveloppe"}</div></div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div style={{textAlign:'right'}}><div style={{fontSize:15,fontWeight:600,color:s>=0?'#1D9E75':'#D85A30'}}>{s>=0?'+':''}{fmt(s)}</div><div style={{fontSize:10,color:'var(--color-muted)'}}>solde</div></div>
@@ -520,7 +512,7 @@ export default function App() {
         </div>
       </div>)}
 
-      {/* ===== LISTE ===== */}
+      {/* LISTE */}
       {view==='liste'&&(<div>
         <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:12}}>{filtered.length} transaction{filtered.length!==1?'s':''} — {MS[filterMonth]} {filterYear}</div>
         {filtered.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucune transaction pour cette période.</div>}
@@ -545,7 +537,7 @@ export default function App() {
         ))}
       </div>)}
 
-      {/* ===== SAISIE ===== */}
+      {/* SAISIE */}
       {view==='saisie'&&(
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1.25rem'}}>
           <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{editId?'Modifier la transaction':'Nouvelle transaction'}</div>
@@ -562,7 +554,7 @@ export default function App() {
               <span style={{fontSize:13,color:'var(--color-muted)'}}>Catégorie</span>
               <button onClick={()=>{setNewCatName('');setNewCatErr('');setNewCatModal(form.type);}} style={{fontSize:12,padding:'2px 8px',borderRadius:20,border:'1px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>+ Nouvelle</button>
             </div>
-            <select value={form.categorie} onChange={e=>setForm(f=>({...f,categorie:e.target.value}))} style={{...inp,marginBottom:0}}>
+            <select value={form.categorie||defCatId(form.type)} onChange={e=>setForm(f=>({...f,categorie:e.target.value}))} style={{...inp,marginBottom:0}}>
               {categories[form.type].map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
@@ -586,7 +578,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal nouveau/edit pot */}
+      {/* Modal pot */}
       {potModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setPotModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
@@ -594,13 +586,11 @@ export default function App() {
             <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Nom du pot</div><input type="text" placeholder="Ex. Vacances, Voiture…" value={potForm.name} onChange={e=>setPotForm(f=>({...f,name:e.target.value}))} style={inp} autoFocus/></div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
               <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Solde actuel (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potForm.current_amount} onChange={e=>setPotForm(f=>({...f,current_amount:e.target.value}))} style={inp}/></div>
-              <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Objectif (€, optionnel)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potForm.target_amount} onChange={e=>setPotForm(f=>({...f,target_amount:e.target.value}))} style={inp}/></div>
+              <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Objectif (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potForm.target_amount} onChange={e=>setPotForm(f=>({...f,target_amount:e.target.value}))} style={inp}/></div>
             </div>
             <div style={{marginBottom:16}}>
               <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:8}}>Couleur</div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-                {PALETTE.map(c=><div key={c} onClick={()=>setPotForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:potForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}
-              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>{PALETTE.map(c=><div key={c} onClick={()=>setPotForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:potForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}</div>
             </div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={savePot} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#534AB7',color:'#fff',cursor:'pointer',fontWeight:600}}>Enregistrer</button>
@@ -610,7 +600,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal dépôt/retrait pot */}
+      {/* Modal dépôt/retrait */}
       {potTxModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setPotTxModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
