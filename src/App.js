@@ -226,20 +226,6 @@ export default function App() {
 
   async function confirmDeletePot(){ await supabase.from('pots').delete().eq('id',deletePotId); await loadAll(); setDeletePotId(null); }
 
-  async function getOrCreateCat(name, type, color){
-    const list = type==='depenses'?categories.depenses:categories.revenus;
-    let cat = list.find(c=>c.name===name);
-    if(!cat){
-      const {data}=await supabase.from('categories').insert({user_id:user.id,name,type,color}).select().single();
-      if(data){
-        cat={id:data.id,name:data.name,color:data.color};
-        setCategories(prev=>({...prev,[type]:[...prev[type],cat]}));
-        setColorMap(prev=>({...prev,[data.id]:data.color}));
-      }
-    }
-    return cat;
-  }
-
   async function savePotTx(){
     if(!potTxForm.amount||isNaN(+potTxForm.amount)||+potTxForm.amount<=0) return;
     const amt=parseFloat(potTxForm.amount);
