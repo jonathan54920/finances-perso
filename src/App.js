@@ -64,6 +64,8 @@ export default function App() {
   const [colorMap,setColorMap]=useState({});
   const [pots,setPots]=useState([]);
   const [potTx,setPotTx]=useState([]);
+  const [savings,setSavings]=useState([]);
+  const [savingsTx,setSavingsTx]=useState([]);
   const [loading,setLoading]=useState(true);
 
   const [view,setView]=useState('accueil');
@@ -82,6 +84,11 @@ export default function App() {
   const [potTxModal,setPotTxModal]=useState(null);
   const [potTxForm,setPotTxForm]=useState({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
   const [deletePotId,setDeletePotId]=useState(null);
+  const [savingModal,setSavingModal]=useState(null);
+  const [savingForm,setSavingForm]=useState({name:'',color:'#1D9E75',current_amount:''});
+  const [savingTxModal,setSavingTxModal]=useState(null);
+  const [savingTxForm,setSavingTxForm]=useState({type:'versement',amount:'',description:'',date:new Date().toISOString().slice(0,10),credit_month:false});
+  const [deleteSavingId,setDeleteSavingId]=useState(null);
 
   useEffect(()=>{
     supabase.auth.getSession().then(({data:{session}})=>{ setUser(session?.user??null); setAuthChecked(true); });
@@ -92,12 +99,14 @@ export default function App() {
   const loadAll = useCallback(async()=>{
     if(!user) return;
     setLoading(true);
-    const [cats,txs,envs,potsRes,potTxRes]=await Promise.all([
+    const [cats,txs,envs,potsRes,potTxRes,savRes,savTxRes]=await Promise.all([
       supabase.from('categories').select('*').eq('user_id',user.id).order('created_at'),
       supabase.from('transactions').select('*, categories(name,type,color)').eq('user_id',user.id).order('date',{ascending:false}),
       supabase.from('envelopes').select('*').eq('user_id',user.id),
       supabase.from('pots').select('*').eq('user_id',user.id).order('created_at'),
       supabase.from('pot_transactions').select('*').eq('user_id',user.id).order('date',{ascending:false}),
+      supabase.from('savings').select('*').eq('user_id',user.id).order('created_at'),
+      supabase.from('savings_transactions').select('*').eq('user_id',user.id).order('date',{ascending:false}),
     ]);
     const revCats=(cats.data||[]).filter(c=>c.type==='revenus').map(c=>({id:c.id,name:c.name,color:c.color}));
     const depCats=(cats.data||[]).filter(c=>c.type==='depenses').map(c=>({id:c.id,name:c.name,color:c.color}));
@@ -105,20 +114,17 @@ export default function App() {
     const cm={};(cats.data||[]).forEach(c=>{cm[c.id]=c.color;});
     setColorMap(cm);
     setTransactions((txs.data||[]).map(t=>({
-      id:t.id,
-      type:t.categories?.type||t.type,
-      categorie:t.category_id,
-      categorieName:t.categories?.name||'',
-      montant:t.amount,
-      description:t.description||'',
-      date:t.date,
-      is_recurring:t.is_recurring,
-      recurring_day:t.recurring_day
+      id:t.id, type:t.categories?.type||t.type, categorie:t.category_id,
+      categorieName:t.categories?.name||'', montant:t.amount,
+      description:t.description||'', date:t.date,
+      is_recurring:t.is_recurring, recurring_day:t.recurring_day
     })));
     const em={};(envs.data||[]).forEach(e=>{em[e.category_id]=e.amount;});
     setEnvelopes(em);
     setPots(potsRes.data||[]);
     setPotTx(potTxRes.data||[]);
+    setSavings(savRes.data||[]);
+    setSavingsTx(savTxRes.data||[]);
     setLoading(false);
   },[user]);
 
@@ -137,11 +143,24 @@ export default function App() {
     return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;
   }),[potTx,filterMonth,filterYear]);
 
+  const filteredSavTx=useMemo(()=>savingsTx.filter(t=>{
+    const d=new Date(t.date);
+    return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;
+  }),[savingsTx,filterMonth,filterYear]);
+
+  // Versements épargne = dépense du mois / Retraits crédités = revenu du mois
+  const savingsDep=filteredSavTx.filter(t=>t.type==='versement').reduce((s,t)=>s+t.amount,0);
+  const savingsRev=filteredSavTx.filter(t=>t.type==='retrait'&&t.credit_month).reduce((s,t)=>s+t.amount,0);
+
   const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0)
-    +filteredPotTx.filter(t=>t.type==='retrait'||t.type==='retrait').reduce((s,t)=>s+t.amount,0);
+    +filteredPotTx.filter(t=>t.type==='retrait'||t.type==='retrait').reduce((s,t)=>s+t.amount,0)
+    +savingsRev;
   const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0)
-    +filteredPotTx.filter(t=>t.type==='depot'||t.type==='dépôt').reduce((s,t)=>s+t.amount,0);
+    +filteredPotTx.filter(t=>t.type==='depot'||t.type==='dépôt').reduce((s,t)=>s+t.amount,0)
+    +savingsDep;
   const solde=totalRev-totalDep;
+
+  const totalSavings=savings.reduce((s,sv)=>s+sv.current_amount,0);
 
   const depBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='depenses').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
   const revBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='revenus').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
@@ -171,18 +190,9 @@ export default function App() {
   years.sort((a,b)=>b-a);
 
   async function handleSubmit(){
-    const catId = form.categorie || categories[form.type][0]?.id;
+    const catId=form.categorie||categories[form.type][0]?.id;
     if(!form.montant||isNaN(+form.montant)||+form.montant<=0||!form.date||!catId) return;
-    const payload={
-      user_id:user.id,
-      category_id:catId,
-      type:form.type,
-      amount:parseFloat(form.montant),
-      description:form.description.trim(),
-      date:form.date,
-      is_recurring:form.is_recurring,
-      recurring_day:form.is_recurring?parseInt(form.recurring_day):null
-    };
+    const payload={user_id:user.id,category_id:catId,type:form.type,amount:parseFloat(form.montant),description:form.description.trim(),date:form.date,is_recurring:form.is_recurring,recurring_day:form.is_recurring?parseInt(form.recurring_day):null};
     if(editId) await supabase.from('transactions').update(payload).eq('id',editId);
     else await supabase.from('transactions').insert(payload);
     await loadAll();
@@ -230,23 +240,30 @@ export default function App() {
   async function savePotTx(){
     if(!potTxForm.amount||isNaN(+potTxForm.amount)||+potTxForm.amount<=0) return;
     const amt=parseFloat(potTxForm.amount);
-    const newAmount=potTxForm.type==='depot'
-      ? potTxModal.current_amount+amt
-      : Math.max(0,potTxModal.current_amount-amt);
-    await supabase.from('pot_transactions').insert({
-      user_id:user.id,
-      pot_id:potTxModal.id,
-      type:potTxForm.type,
-      amount:amt,
-      description:potTxForm.description,
-      date:potTxForm.date,
-      is_recurring:potTxForm.is_recurring,
-      recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null
-    });
+    const newAmount=potTxForm.type==='depot' ? potTxModal.current_amount+amt : Math.max(0,potTxModal.current_amount-amt);
+    await supabase.from('pot_transactions').insert({user_id:user.id,pot_id:potTxModal.id,type:potTxForm.type,amount:amt,description:potTxForm.description,date:potTxForm.date,is_recurring:potTxForm.is_recurring,recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null});
     await supabase.from('pots').update({current_amount:newAmount}).eq('id',potTxModal.id);
-    await loadAll();
-    setPotTxModal(null);
-    setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
+    await loadAll(); setPotTxModal(null); setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
+  }
+
+  async function saveSaving(){
+    if(!savingForm.name.trim()) return;
+    const payload={user_id:user.id,name:savingForm.name.trim(),color:savingForm.color,current_amount:parseFloat(savingForm.current_amount)||0};
+    if(savingModal==='new') await supabase.from('savings').insert(payload);
+    else await supabase.from('savings').update(payload).eq('id',savingModal.id);
+    await loadAll(); setSavingModal(null); setSavingForm({name:'',color:'#1D9E75',current_amount:''});
+  }
+
+  async function confirmDeleteSaving(){ await supabase.from('savings').delete().eq('id',deleteSavingId); await loadAll(); setDeleteSavingId(null); }
+
+  async function saveSavingTx(){
+    if(!savingTxForm.amount||isNaN(+savingTxForm.amount)||+savingTxForm.amount<=0) return;
+    const amt=parseFloat(savingTxForm.amount);
+    const sv=savingTxModal;
+    const newAmount=savingTxForm.type==='versement' ? sv.current_amount+amt : Math.max(0,sv.current_amount-amt);
+    await supabase.from('savings_transactions').insert({user_id:user.id,saving_id:sv.id,type:savingTxForm.type,amount:amt,description:savingTxForm.description,date:savingTxForm.date,credit_month:savingTxForm.credit_month});
+    await supabase.from('savings').update({current_amount:newAmount}).eq('id',sv.id);
+    await loadAll(); setSavingTxModal(null); setSavingTxForm({type:'versement',amount:'',description:'',date:new Date().toISOString().slice(0,10),credit_month:false});
   }
 
   function exportExcel(period){
@@ -272,6 +289,7 @@ export default function App() {
 
   return(
     <div style={{maxWidth:480,margin:'0 auto',padding:'1rem',paddingBottom:80}}>
+      {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
         <div>
           <div style={{fontSize:20,fontWeight:600,color:'var(--color-text)'}}>JSJE Finances</div>
@@ -283,10 +301,12 @@ export default function App() {
         </div>
       </div>
 
+      {/* Nav */}
       <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
-        {[['accueil','🏠 Accueil'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions']].map(([k,l])=>pill(l,view===k,()=>setView(k)))}
+        {[['accueil','🏠'],['epargne','💰 Épargne'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions']].map(([k,l])=>pill(l,view===k,()=>setView(k)))}
       </div>
 
+      {/* Filtre période */}
       {view!=='saisie'&&(
         <div style={{display:'flex',gap:5,marginBottom:18,flexWrap:'wrap',alignItems:'center'}}>
           <span style={{fontSize:11,color:'var(--color-muted)'}}>Période :</span>
@@ -295,7 +315,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ACCUEIL */}
+      {/* ===== ACCUEIL ===== */}
       {view==='accueil'&&(<div>
         {alerts.length>0&&<div style={{marginBottom:14}}>{alerts.map(a=>(
           <div key={a.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:12,background:ha('#D85A30',.08),border:'1.5px solid #D85A30',marginBottom:8}}>
@@ -305,6 +325,7 @@ export default function App() {
           </div>
         ))}</div>}
 
+        {/* 4 KPI */}
         {(()=>{
           const aRev=transactions.filter(t=>new Date(t.date).getFullYear()===filterYear&&t.type==='revenus').reduce((s,t)=>s+t.montant,0);
           const aDep=transactions.filter(t=>new Date(t.date).getFullYear()===filterYear&&t.type==='depenses').reduce((s,t)=>s+t.montant,0);
@@ -329,6 +350,25 @@ export default function App() {
           </div>);
         })()}
 
+        {/* Épargne résumé accueil */}
+        {savings.length>0&&(<div style={{background:ha('#1D9E75',.08),border:`1px solid ${ha('#1D9E75',.2)}`,borderRadius:14,padding:'1rem',marginBottom:14}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+            <div style={{fontSize:14,fontWeight:600}}>💰 Épargne totale</div>
+            <div style={{fontSize:18,fontWeight:600,color:'#1D9E75'}}>{fmt(totalSavings)}</div>
+          </div>
+          {savings.map(sv=>(
+            <div key={sv.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              <div style={{width:26,height:26,borderRadius:'50%',background:ha(sv.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:11,fontWeight:600,color:sv.color}}>{sv.name[0]}</span></div>
+              <div style={{flex:1,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:13,fontWeight:500}}>{sv.name}</span>
+                <span style={{fontSize:13,fontWeight:600,color:sv.color}}>{fmt(sv.current_amount)}</span>
+              </div>
+            </div>
+          ))}
+          <button onClick={()=>setView('epargne')} style={{width:'100%',marginTop:6,padding:'7px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)',fontSize:13}}>Gérer l'épargne →</button>
+        </div>)}
+
+        {/* Pots résumé */}
         {pots.length>0&&(<div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:600}}>🏦 Pots d'épargne</div>
@@ -350,6 +390,7 @@ export default function App() {
           <button onClick={()=>setView('pots')} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)',fontSize:13}}>Voir tous les pots →</button>
         </div>)}
 
+        {/* Graphique */}
         {monthly.length>0&&(<div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>Évolution 6 mois</div>
           <div style={{display:'flex',alignItems:'flex-end',gap:6,height:100}}>
@@ -369,6 +410,7 @@ export default function App() {
           </div>
         </div>)}
 
+        {/* Résumé catégories */}
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:14}}>Résumé par catégorie</div>
           {categories.revenus.filter(c=>revBycat[c.id]).length===0&&categories.depenses.filter(c=>depBycat[c.id]).length===0&&<div style={{fontSize:13,color:'var(--color-muted)'}}>Aucune transaction ce mois-ci.</div>}
@@ -396,7 +438,6 @@ export default function App() {
                     <span style={{color:over?'#D85A30':'var(--color-muted)',fontWeight:500}}>{fmt(spent)}{budget>0?` / ${fmt(budget)}`:''}{over&&' ⚠️'}</span>
                   </div>
                   <div style={{height:5,background:'var(--color-bg)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${budget>0?p:Math.round((spent/maxV)*100)}%`,background:over?'#D85A30':p>80?'#BA7517':cat.color,borderRadius:3}}/></div>
-                  {budget>0&&env?.carry>0&&<div style={{fontSize:10,color:'#534AB7',marginTop:2}}>Report : +{fmt(env.carry)}</div>}
                   {budget>0&&<div style={{fontSize:10,color:over?'#D85A30':'var(--color-muted)',marginTop:1}}>{over?`Dépassé de ${fmt(spent-budget)}`:`Reste ${fmt(budget-spent)}`}</div>}
                 </div>
               </div>);
@@ -404,6 +445,7 @@ export default function App() {
           </div>)}
         </div>
 
+        {/* Export */}
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem'}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>📥 Export Excel</div>
           <div style={{display:'flex',gap:8}}>
@@ -413,7 +455,59 @@ export default function App() {
         </div>
       </div>)}
 
-      {/* POTS */}
+      {/* ===== ÉPARGNE ===== */}
+      {view==='epargne'&&(<div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <div style={{fontSize:14,fontWeight:600}}>Comptes épargne</div>
+          <button onClick={()=>{setSavingForm({name:'',color:'#1D9E75',current_amount:''});setSavingModal('new');}} style={{padding:'6px 14px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:600,fontSize:13}}>+ Nouveau compte</button>
+        </div>
+
+        {/* Total épargne */}
+        {savings.length>0&&(<div style={{background:ha('#1D9E75',.08),border:`1px solid ${ha('#1D9E75',.2)}`,borderRadius:14,padding:'1rem',marginBottom:14}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:13,fontWeight:600,color:'#1D9E75'}}>Total épargne</span>
+            <span style={{fontSize:20,fontWeight:600,color:'#1D9E75'}}>{fmt(totalSavings)}</span>
+          </div>
+          <div style={{fontSize:11,color:'var(--color-muted)',marginTop:4}}>Solde indépendant du budget mensuel</div>
+        </div>)}
+
+        {savings.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucun compte épargne. Crée ton premier compte !</div>}
+
+        {savings.map(sv=>{
+          const txList=savingsTx.filter(t=>t.saving_id===sv.id).slice(0,4);
+          const mVersements=filteredSavTx.filter(t=>t.saving_id===sv.id&&t.type==='versement').reduce((s,t)=>s+t.amount,0);
+          const mRetraits=filteredSavTx.filter(t=>t.saving_id===sv.id&&t.type==='retrait').reduce((s,t)=>s+t.amount,0);
+          return(<div key={sv.id} style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:10}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <div style={{width:36,height:36,borderRadius:'50%',background:ha(sv.color,.15),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:16,color:sv.color}}>{sv.name[0]}</div>
+                <div><div style={{fontSize:14,fontWeight:600}}>{sv.name}</div><div style={{fontSize:11,color:'var(--color-muted)'}}>Ce mois : +{fmt(mVersements)} / -{fmt(mRetraits)}</div></div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <div style={{fontSize:20,fontWeight:600,color:sv.color}}>{fmt(sv.current_amount)}</div>
+                <button onClick={()=>{setSavingForm({name:sv.name,color:sv.color,current_amount:sv.current_amount});setSavingModal(sv);}} style={{width:26,height:26,borderRadius:'50%',border:'0.5px solid var(--color-border)',background:'var(--color-bg)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>✏️</button>
+                <button onClick={()=>setDeleteSavingId(sv.id)} style={{width:26,height:26,borderRadius:'50%',border:'0.5px solid var(--color-border)',background:'var(--color-bg)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:'#D85A30'}}>🗑</button>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8,marginBottom:txList.length>0?10:0}}>
+              <button onClick={()=>{setSavingTxForm({type:'versement',amount:'',description:'',date:new Date().toISOString().slice(0,10),credit_month:false});setSavingTxModal(sv);}} style={{flex:1,padding:'8px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:500,fontSize:13}}>+ Versement</button>
+              <button onClick={()=>{setSavingTxForm({type:'retrait',amount:'',description:'',date:new Date().toISOString().slice(0,10),credit_month:false});setSavingTxModal(sv);}} style={{flex:1,padding:'8px',borderRadius:10,border:'1.5px solid #D85A30',background:ha('#D85A30',.1),color:'#D85A30',cursor:'pointer',fontWeight:500,fontSize:13}}>- Retrait</button>
+            </div>
+            {txList.length>0&&(<div style={{borderTop:'0.5px solid var(--color-border)',paddingTop:8}}>
+              <div style={{fontSize:11,color:'var(--color-muted)',marginBottom:6}}>Derniers mouvements</div>
+              {txList.map(t=>(<div key={t.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:12,marginBottom:4}}>
+                <span style={{color:'var(--color-muted)'}}>{t.description||t.type} · {new Date(t.date).toLocaleDateString('fr-FR')}</span>
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  {t.type==='retrait'&&t.credit_month&&<span style={{fontSize:10,padding:'1px 5px',borderRadius:8,background:ha('#1D9E75',.1),color:'#1D9E75'}}>crédité</span>}
+                  <span style={{color:t.type==='versement'?'#1D9E75':'#D85A30',fontWeight:500}}>{t.type==='versement'?'+':'-'}{fmt(t.amount)}</span>
+                </div>
+              </div>))}
+            </div>)}
+          </div>);
+        })}
+      </div>)}
+
+      {/* ===== POTS ===== */}
       {view==='pots'&&(<div>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600}}>Pots d'épargne</div>
@@ -459,7 +553,7 @@ export default function App() {
         })}
       </div>)}
 
-      {/* CATÉGORIES */}
+      {/* ===== CATÉGORIES ===== */}
       {view==='categories'&&(<div>
         {[...categories.revenus,...categories.depenses].filter(c=>depBycat[c.id]||revBycat[c.id]).map(cat=>{
           const rev=revBycat[cat.id]||0;const dep=depBycat[cat.id]||0;const s=rev-dep;
@@ -468,7 +562,7 @@ export default function App() {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div style={{width:32,height:32,borderRadius:'50%',background:ha(cat.color,.15),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:13,color:cat.color}}>{cat.name[0]}</div>
-                <div><div style={{fontSize:14,fontWeight:600}}>{cat.name}</div><div style={{fontSize:11,color:'var(--color-muted)'}}>{budget>0?`Budget : ${fmt(envelopes[cat.id])}/mois${env?.carry>0?` + report ${fmt(env.carry)}`:''}`:"Pas d'enveloppe"}</div></div>
+                <div><div style={{fontSize:14,fontWeight:600}}>{cat.name}</div><div style={{fontSize:11,color:'var(--color-muted)'}}>{budget>0?`Budget : ${fmt(envelopes[cat.id])}/mois`:"Pas d'enveloppe"}</div></div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div style={{textAlign:'right'}}><div style={{fontSize:15,fontWeight:600,color:s>=0?'#1D9E75':'#D85A30'}}>{s>=0?'+':''}{fmt(s)}</div><div style={{fontSize:10,color:'var(--color-muted)'}}>solde</div></div>
@@ -503,7 +597,7 @@ export default function App() {
         </div>
       </div>)}
 
-      {/* LISTE */}
+      {/* ===== LISTE ===== */}
       {view==='liste'&&(<div>
         <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:12}}>{filtered.length} transaction{filtered.length!==1?'s':''} — {MS[filterMonth]} {filterYear}</div>
         {filtered.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucune transaction pour cette période.</div>}
@@ -528,7 +622,7 @@ export default function App() {
         ))}
       </div>)}
 
-      {/* SAISIE */}
+      {/* ===== SAISIE ===== */}
       {view==='saisie'&&(
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1.25rem'}}>
           <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{editId?'Modifier la transaction':'Nouvelle transaction'}</div>
@@ -569,7 +663,65 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal pot */}
+      {/* Modal épargne nouveau/edit */}
+      {savingModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setSavingModal(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{savingModal==='new'?'Nouveau compte épargne':'Modifier le compte'}</div>
+            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Nom du compte</div><input type="text" placeholder="Ex. Livret A, PEL…" value={savingForm.name} onChange={e=>setSavingForm(f=>({...f,name:e.target.value}))} style={inp} autoFocus/></div>
+            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Solde actuel (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={savingForm.current_amount} onChange={e=>setSavingForm(f=>({...f,current_amount:e.target.value}))} style={inp}/></div>
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:8}}>Couleur</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>{PALETTE.map(c=><div key={c} onClick={()=>setSavingForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:savingForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}</div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={saveSaving} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#1D9E75',color:'#fff',cursor:'pointer',fontWeight:600}}>Enregistrer</button>
+              <button onClick={()=>setSavingModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal versement/retrait épargne */}
+      {savingTxModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setSavingTxModal(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>{savingTxModal.name}</div>
+            <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:16}}>Solde : {fmt(savingTxModal.current_amount)}</div>
+            <div style={{display:'flex',gap:8,marginBottom:14}}>
+              {[['versement','+ Versement','#1D9E75'],['retrait','- Retrait','#D85A30']].map(([k,l,c])=>(
+                <button key={k} onClick={()=>setSavingTxForm(f=>({...f,type:k,credit_month:false}))} style={{flex:1,padding:'9px',borderRadius:10,border:`1.5px solid ${savingTxForm.type===k?c:'var(--color-border)'}`,background:savingTxForm.type===k?ha(c,.1):'transparent',color:savingTxForm.type===k?c:'var(--color-muted)',cursor:'pointer',fontWeight:savingTxForm.type===k?600:400}}>{l}</button>
+              ))}
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Montant (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={savingTxForm.amount} onChange={e=>setSavingTxForm(f=>({...f,amount:e.target.value}))} style={inp} autoFocus/></div>
+              <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Date</div><input type="date" value={savingTxForm.date} onChange={e=>setSavingTxForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
+            </div>
+            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Virement mensuel…" value={savingTxForm.description} onChange={e=>setSavingTxForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
+
+            {/* Option versement impact budget */}
+            {savingTxForm.type==='versement'&&(
+              <div style={{marginBottom:14,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:ha('#D85A30',.05),border:'0.5px solid var(--color-border)'}}>
+                <input type="checkbox" id="impactBudget" checked={true} readOnly style={{width:16,height:16}}/>
+                <label htmlFor="impactBudget" style={{fontSize:13,flex:1,color:'var(--color-muted)'}}>💸 Défalqué du solde du mois</label>
+              </div>
+            )}
+            {savingTxForm.type==='retrait'&&(
+              <div style={{marginBottom:14,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:ha('#1D9E75',.05),border:'0.5px solid var(--color-border)'}}>
+                <input type="checkbox" id="creditMonth" checked={savingTxForm.credit_month} onChange={e=>setSavingTxForm(f=>({...f,credit_month:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}}/>
+                <label htmlFor="creditMonth" style={{fontSize:13,cursor:'pointer',flex:1}}>💰 Créditer le solde du mois</label>
+              </div>
+            )}
+
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={saveSavingTx} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:savingTxForm.type==='versement'?'#1D9E75':'#D85A30',color:'#fff',cursor:'pointer',fontWeight:600}}>Confirmer</button>
+              <button onClick={()=>setSavingTxModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal pot nouveau/edit */}
       {potModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setPotModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
@@ -591,7 +743,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal dépôt/retrait */}
+      {/* Modal dépôt/retrait pot */}
       {potTxModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setPotTxModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
@@ -652,14 +804,14 @@ export default function App() {
           </div>
         </div>
       )}
-      {(deleteId||deletePotId)&&(
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>{setDeleteId(null);setDeletePotId(null);}}>
+      {(deleteId||deletePotId||deleteSavingId)&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>{setDeleteId(null);setDeletePotId(null);setDeleteSavingId(null);}}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:8}}>Supprimer ?</div>
             <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:20}}>Cette action est irréversible.</div>
             <div style={{display:'flex',gap:8}}>
-              <button onClick={deleteId?confirmDelete:confirmDeletePot} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#D85A30',color:'#fff',cursor:'pointer',fontWeight:600}}>Supprimer</button>
-              <button onClick={()=>{setDeleteId(null);setDeletePotId(null);}} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
+              <button onClick={deleteId?confirmDelete:deletePotId?confirmDeletePot:confirmDeleteSaving} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#D85A30',color:'#fff',cursor:'pointer',fontWeight:600}}>Supprimer</button>
+              <button onClick={()=>{setDeleteId(null);setDeletePotId(null);setDeleteSavingId(null);}} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
             </div>
           </div>
         </div>
