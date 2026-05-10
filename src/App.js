@@ -71,6 +71,8 @@ export default function App() {
   const [view,setView]=useState('accueil');
   const [filterMonth,setFilterMonth]=useState(new Date().getMonth());
   const [filterYear,setFilterYear]=useState(new Date().getFullYear());
+  const [filterValidated,setFilterValidated]=useState('all'); // all | validated | pending
+  const [selectedCat,setSelectedCat]=useState(null);
   const [form,setForm]=useState({type:'depenses',categorie:'',montant:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
   const [editId,setEditId]=useState(null);
   const [deleteId,setDeleteId]=useState(null);
@@ -117,14 +119,15 @@ export default function App() {
       id:t.id, type:t.categories?.type||t.type, categorie:t.category_id,
       categorieName:t.categories?.name||'', montant:t.amount,
       description:t.description||'', date:t.date,
-      is_recurring:t.is_recurring, recurring_day:t.recurring_day
+      is_recurring:t.is_recurring, recurring_day:t.recurring_day,
+      validated:t.validated||false, source:'tx'
     })));
     const em={};(envs.data||[]).forEach(e=>{em[e.category_id]=e.amount;});
     setEnvelopes(em);
     setPots(potsRes.data||[]);
-    setPotTx(potTxRes.data||[]);
+    setPotTx((potTxRes.data||[]).map(t=>({...t, validated:t.validated||false, source:'pot'})));
     setSavings(savRes.data||[]);
-    setSavingsTx(savTxRes.data||[]);
+    setSavingsTx((savTxRes.data||[]).map(t=>({...t, validated:t.validated||false, source:'saving'})));
     setLoading(false);
   },[user]);
 
@@ -132,6 +135,10 @@ export default function App() {
 
   const getCatName=id=>{const all=[...categories.revenus,...categories.depenses];return all.find(c=>c.id===id)?.name||'';};
   const getCatColor=id=>colorMap[id]||PALETTE[0];
+  const getPotName=id=>pots.find(p=>p.id===id)?.name||'Pot';
+  const getPotColor=id=>pots.find(p=>p.id===id)?.color||PALETTE[0];
+  const getSavingName=id=>savings.find(s=>s.id===id)?.name||'Épargne';
+  const getSavingColor=id=>savings.find(s=>s.id===id)?.color||'#1D9E75';
 
   const filtered=useMemo(()=>transactions.filter(t=>{
     const d=new Date(t.date);
@@ -148,18 +155,48 @@ export default function App() {
     return d.getMonth()===filterMonth&&d.getFullYear()===filterYear;
   }),[savingsTx,filterMonth,filterYear]);
 
-  // Versements épargne = dépense du mois / Retraits crédités = revenu du mois
+  // Toutes les transactions unifiées triées par date
+  const allTx=useMemo(()=>{
+    const txNormal=filtered.map(t=>({
+      id:t.id, source:'tx', date:t.date,
+      label:t.description||getCatName(t.categorie),
+      sublabel:getCatName(t.categorie),
+      amount:t.montant,
+      isPlus:t.type==='revenus',
+      color:getCatColor(t.categorie),
+      validated:t.validated,
+      is_recurring:t.is_recurring,
+      categorie:t.categorie,
+    }));
+    const txPot=filteredPotTx.map(t=>({
+      id:t.id, source:'pot', date:t.date,
+      label:(t.description||'')||`${t.type==='depot'?'Dépôt':'Retrait'} — ${getPotName(t.pot_id)}`,
+      sublabel:`🏦 ${getPotName(t.pot_id)}`,
+      amount:t.amount,
+      isPlus:t.type==='retrait'||t.type==='retrait',
+      color:getPotColor(t.pot_id),
+      validated:t.validated,
+      is_recurring:t.is_recurring,
+    }));
+    const txSav=filteredSavTx.map(t=>({
+      id:t.id, source:'saving', date:t.date,
+      label:(t.description||'')||`${t.type==='versement'?'Versement':'Retrait'} — ${getSavingName(t.saving_id)}`,
+      sublabel:`💰 ${getSavingName(t.saving_id)}`,
+      amount:t.amount,
+      isPlus:t.type==='retrait'&&t.credit_month,
+      isSaving:true,
+      color:getSavingColor(t.saving_id),
+      validated:t.validated,
+    }));
+    return [...txNormal,...txPot,...txSav].sort((a,b)=>b.date.localeCompare(a.date));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[filtered,filteredPotTx,filteredSavTx]);
+
   const savingsDep=filteredSavTx.filter(t=>t.type==='versement').reduce((s,t)=>s+t.amount,0);
   const savingsRev=filteredSavTx.filter(t=>t.type==='retrait'&&t.credit_month).reduce((s,t)=>s+t.amount,0);
-
-  const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0)
-    +filteredPotTx.filter(t=>t.type==='retrait'||t.type==='retrait').reduce((s,t)=>s+t.amount,0)
-    +savingsRev;
-  const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0)
-    +filteredPotTx.filter(t=>t.type==='depot'||t.type==='dépôt').reduce((s,t)=>s+t.amount,0)
-    +savingsDep;
+  const totalRev=filtered.filter(t=>t.type==='revenus').reduce((s,t)=>s+t.montant,0)+filteredPotTx.filter(t=>t.type==='retrait'||t.type==='retrait').reduce((s,t)=>s+t.amount,0)+savingsRev;
+  const totalDep=filtered.filter(t=>t.type==='depenses').reduce((s,t)=>s+t.montant,0)+filteredPotTx.filter(t=>t.type==='depot'||t.type==='dépôt').reduce((s,t)=>s+t.amount,0)+savingsDep;
   const solde=totalRev-totalDep;
-
   const totalSavings=savings.reduce((s,sv)=>s+sv.current_amount,0);
 
   const depBycat=useMemo(()=>{const m={};filtered.filter(t=>t.type==='depenses').forEach(t=>{m[t.categorie]=(m[t.categorie]||0)+t.montant;});return m;},[filtered]);
@@ -167,9 +204,7 @@ export default function App() {
 
   const envelopeWithCarry=useMemo(()=>{
     const result={};
-    Object.entries(envelopes).forEach(([catId,budget])=>{
-      result[catId]={budget,carry:0,total:budget};
-    });
+    Object.entries(envelopes).forEach(([catId,budget])=>{ result[catId]={budget,carry:0,total:budget}; });
     return result;
   },[envelopes]);
 
@@ -189,6 +224,20 @@ export default function App() {
   const years=[...new Set([...transactions.map(t=>new Date(t.date).getFullYear()),filterYear,new Date().getFullYear(),new Date().getFullYear()+1,new Date().getFullYear()+2])];
   years.sort((a,b)=>b-a);
 
+  async function toggleValidated(tx){
+    const newVal=!tx.validated;
+    if(tx.source==='tx'){
+      await supabase.from('transactions').update({validated:newVal}).eq('id',tx.id);
+      setTransactions(prev=>prev.map(t=>t.id===tx.id?{...t,validated:newVal}:t));
+    } else if(tx.source==='pot'){
+      await supabase.from('pot_transactions').update({validated:newVal}).eq('id',tx.id);
+      setPotTx(prev=>prev.map(t=>t.id===tx.id?{...t,validated:newVal}:t));
+    } else if(tx.source==='saving'){
+      await supabase.from('savings_transactions').update({validated:newVal}).eq('id',tx.id);
+      setSavingsTx(prev=>prev.map(t=>t.id===tx.id?{...t,validated:newVal}:t));
+    }
+  }
+
   async function handleSubmit(){
     const catId=form.categorie||categories[form.type][0]?.id;
     if(!form.montant||isNaN(+form.montant)||+form.montant<=0||!form.date||!catId) return;
@@ -206,7 +255,6 @@ export default function App() {
   }
 
   async function confirmDelete(){ await supabase.from('transactions').delete().eq('id',deleteId); await loadAll(); setDeleteId(null); }
-
   async function confirmNewCat(){
     const name=newCatName.trim();
     if(!name){setNewCatErr('Nom requis.');return;}
@@ -217,16 +265,13 @@ export default function App() {
     if(data){setCategories(prev=>({...prev,[newCatModal]:[...prev[newCatModal],{id:data.id,name,color}]}));setColorMap(prev=>({...prev,[data.id]:color}));}
     setNewCatModal(null); setNewCatName('');
   }
-
   async function deleteCat(type,catId){ await supabase.from('categories').delete().eq('id',catId); setCategories(prev=>({...prev,[type]:prev[type].filter(c=>c.id!==catId)})); }
-
   async function saveEnvelope(){
     const v=parseFloat(envValue);
     if(!v||v<=0){ await supabase.from('envelopes').delete().eq('user_id',user.id).eq('category_id',envModal); setEnvelopes(prev=>{const e={...prev};delete e[envModal];return e;}); }
     else{ await supabase.from('envelopes').upsert({user_id:user.id,category_id:envModal,amount:v},{onConflict:'user_id,category_id'}); setEnvelopes(prev=>({...prev,[envModal]:v})); }
     setEnvModal(null); setEnvValue('');
   }
-
   async function savePot(){
     if(!potForm.name.trim()) return;
     const payload={user_id:user.id,name:potForm.name.trim(),color:potForm.color,target_amount:parseFloat(potForm.target_amount)||0,current_amount:parseFloat(potForm.current_amount)||0};
@@ -234,18 +279,15 @@ export default function App() {
     else await supabase.from('pots').update(payload).eq('id',potModal.id);
     await loadAll(); setPotModal(null); setPotForm({name:'',color:PALETTE[0],target_amount:'',current_amount:''});
   }
-
   async function confirmDeletePot(){ await supabase.from('pots').delete().eq('id',deletePotId); await loadAll(); setDeletePotId(null); }
-
   async function savePotTx(){
     if(!potTxForm.amount||isNaN(+potTxForm.amount)||+potTxForm.amount<=0) return;
     const amt=parseFloat(potTxForm.amount);
-    const newAmount=potTxForm.type==='depot' ? potTxModal.current_amount+amt : Math.max(0,potTxModal.current_amount-amt);
+    const newAmount=potTxForm.type==='depot'?potTxModal.current_amount+amt:Math.max(0,potTxModal.current_amount-amt);
     await supabase.from('pot_transactions').insert({user_id:user.id,pot_id:potTxModal.id,type:potTxForm.type,amount:amt,description:potTxForm.description,date:potTxForm.date,is_recurring:potTxForm.is_recurring,recurring_day:potTxForm.is_recurring?parseInt(potTxForm.recurring_day):null});
     await supabase.from('pots').update({current_amount:newAmount}).eq('id',potTxModal.id);
     await loadAll(); setPotTxModal(null); setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
   }
-
   async function saveSaving(){
     if(!savingForm.name.trim()) return;
     const payload={user_id:user.id,name:savingForm.name.trim(),color:savingForm.color,current_amount:parseFloat(savingForm.current_amount)||0};
@@ -253,28 +295,24 @@ export default function App() {
     else await supabase.from('savings').update(payload).eq('id',savingModal.id);
     await loadAll(); setSavingModal(null); setSavingForm({name:'',color:'#1D9E75',current_amount:''});
   }
-
   async function confirmDeleteSaving(){ await supabase.from('savings').delete().eq('id',deleteSavingId); await loadAll(); setDeleteSavingId(null); }
-
   async function saveSavingTx(){
     if(!savingTxForm.amount||isNaN(+savingTxForm.amount)||+savingTxForm.amount<=0) return;
     const amt=parseFloat(savingTxForm.amount);
     const sv=savingTxModal;
-    const newAmount=savingTxForm.type==='versement' ? sv.current_amount+amt : Math.max(0,sv.current_amount-amt);
+    const newAmount=savingTxForm.type==='versement'?sv.current_amount+amt:Math.max(0,sv.current_amount-amt);
     await supabase.from('savings_transactions').insert({user_id:user.id,saving_id:sv.id,type:savingTxForm.type,amount:amt,description:savingTxForm.description,date:savingTxForm.date,credit_month:savingTxForm.credit_month});
     await supabase.from('savings').update({current_amount:newAmount}).eq('id',sv.id);
     await loadAll(); setSavingTxModal(null); setSavingTxForm({type:'versement',amount:'',description:'',date:new Date().toISOString().slice(0,10),credit_month:false});
   }
-
   function exportExcel(period){
     const rows=period==='mois'?filtered:transactions.filter(t=>new Date(t.date).getFullYear()===filterYear);
-    const data=rows.map(t=>({'Date':t.date,'Type':t.type==='revenus'?'Revenu':'Dépense','Catégorie':getCatName(t.categorie),'Montant':t.montant,'Description':t.description,'Récurrent':t.is_recurring?'Oui':'Non'}));
+    const data=rows.map(t=>({'Date':t.date,'Type':t.type==='revenus'?'Revenu':'Dépense','Catégorie':getCatName(t.categorie),'Montant':t.montant,'Description':t.description,'Validé':t.validated?'Oui':'Non'}));
     const ws=XLSX.utils.json_to_sheet(data);
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,ws,period==='mois'?`${MS[filterMonth]} ${filterYear}`:String(filterYear));
     XLSX.writeFile(wb,`finances_${period==='mois'?`${filterMonth+1}_${filterYear}`:filterYear}.xlsx`);
   }
-
   async function logout(){ await supabase.auth.signOut(); setUser(null); }
 
   if(!authChecked) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:14,color:'#888'}}>Chargement…</div>;
@@ -286,6 +324,44 @@ export default function App() {
   );
   const defCatId=(type)=>categories[type][0]?.id||'';
   const inp={width:'100%',padding:'10px 12px',borderRadius:10,border:'1px solid var(--color-border)',fontSize:14,boxSizing:'border-box',background:'var(--color-bg)',color:'var(--color-text)'};
+
+  // Composant ligne de transaction unifiée
+  const TxRow=({tx})=>(
+    <div style={{display:'flex',alignItems:'center',gap:10,padding:'11px 0',borderBottom:'0.5px solid var(--color-border)',opacity:tx.validated?0.6:1}}>
+      <div onClick={()=>toggleValidated(tx)} style={{width:20,height:20,borderRadius:6,border:`2px solid ${tx.validated?'#1D9E75':'var(--color-border)'}`,background:tx.validated?'#1D9E75':'transparent',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        {tx.validated&&<span style={{color:'#fff',fontSize:12,lineHeight:1}}>✓</span>}
+      </div>
+      <div style={{width:34,height:34,borderRadius:'50%',background:ha(tx.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+        <span style={{fontSize:12,fontWeight:600,color:tx.color}}>{(tx.label||'?')[0]}</span>
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:5}}>
+          <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{tx.label}</div>
+          {tx.is_recurring&&<span style={{fontSize:9,padding:'1px 5px',borderRadius:8,background:ha('#534AB7',.1),color:'#534AB7',flexShrink:0}}>🔄</span>}
+        </div>
+        <div style={{fontSize:11,color:'var(--color-muted)'}}>{tx.sublabel} · {new Date(tx.date).toLocaleDateString('fr-FR')}</div>
+      </div>
+      <div style={{fontWeight:600,fontSize:14,color:tx.isSaving?'var(--color-muted)':tx.isPlus?'#1D9E75':'#D85A30',flexShrink:0}}>
+        {tx.isSaving?'':'+'[tx.isPlus?0:1]}{fmt(tx.amount)}
+      </div>
+      {tx.source==='tx'&&(
+        <div style={{display:'flex',gap:3,flexShrink:0}}>
+          <button onClick={()=>startEdit(transactions.find(t=>t.id===tx.id))} style={{padding:'3px 6px',fontSize:11,borderRadius:6,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>✏️</button>
+          <button onClick={()=>setDeleteId(tx.id)} style={{padding:'3px 6px',fontSize:11,borderRadius:6,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'#D85A30'}}>🗑</button>
+        </div>
+      )}
+    </div>
+  );
+
+  // Transactions filtrées selon validation
+  const displayedTx = allTx.filter(tx=>{
+    if(filterValidated==='validated') return tx.validated;
+    if(filterValidated==='pending') return !tx.validated;
+    return true;
+  });
+
+  // Transactions d'une catégorie spécifique
+  const catTx = selectedCat ? transactions.filter(t=>t.categorie===selectedCat.id&&new Date(t.date).getMonth()===filterMonth&&new Date(t.date).getFullYear()===filterYear) : [];
 
   return(
     <div style={{maxWidth:480,margin:'0 auto',padding:'1rem',paddingBottom:80}}>
@@ -303,7 +379,7 @@ export default function App() {
 
       {/* Nav */}
       <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
-        {[['accueil','🏠'],['epargne','💰 Épargne'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions']].map(([k,l])=>pill(l,view===k,()=>setView(k)))}
+        {[['accueil','🏠'],['epargne','💰 Épargne'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions']].map(([k,l])=>pill(l,view===k,()=>{setView(k);setSelectedCat(null);}))}
       </div>
 
       {/* Filtre période */}
@@ -316,7 +392,7 @@ export default function App() {
       )}
 
       {/* ===== ACCUEIL ===== */}
-      {view==='accueil'&&(<div>
+      {view==='accueil'&&!selectedCat&&(<div>
         {alerts.length>0&&<div style={{marginBottom:14}}>{alerts.map(a=>(
           <div key={a.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:12,background:ha('#D85A30',.08),border:'1.5px solid #D85A30',marginBottom:8}}>
             <span>⚠️</span>
@@ -350,7 +426,7 @@ export default function App() {
           </div>);
         })()}
 
-        {/* Épargne résumé accueil */}
+        {/* Épargne résumé */}
         {savings.length>0&&(<div style={{background:ha('#1D9E75',.08),border:`1px solid ${ha('#1D9E75',.2)}`,borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
             <div style={{fontSize:14,fontWeight:600}}>💰 Épargne totale</div>
@@ -359,7 +435,7 @@ export default function App() {
           {savings.map(sv=>(
             <div key={sv.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
               <div style={{width:26,height:26,borderRadius:'50%',background:ha(sv.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:11,fontWeight:600,color:sv.color}}>{sv.name[0]}</span></div>
-              <div style={{flex:1,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div style={{flex:1,display:'flex',justifyContent:'space-between'}}>
                 <span style={{fontSize:13,fontWeight:500}}>{sv.name}</span>
                 <span style={{fontSize:13,fontWeight:600,color:sv.color}}>{fmt(sv.current_amount)}</span>
               </div>
@@ -371,23 +447,21 @@ export default function App() {
         {/* Pots résumé */}
         {pots.length>0&&(<div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
-            <div style={{fontSize:14,fontWeight:600}}>🏦 Pots d'épargne</div>
-            <div style={{fontSize:13,fontWeight:600,color:'#534AB7'}}>{fmt(totalPots)}{totalPotsTarget>0&&<span style={{fontSize:11,color:'var(--color-muted)',fontWeight:400}}> / {fmt(totalPotsTarget)}</span>}</div>
+            <div style={{fontSize:14,fontWeight:600}}>🏦 Pots</div>
+            <div style={{fontSize:13,fontWeight:600,color:'#534AB7'}}>{fmt(totalPots)}</div>
           </div>
-          {totalPotsTarget>0&&<div style={{height:6,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:12}}><div style={{height:'100%',width:`${pct(totalPots,totalPotsTarget)}%`,background:'#534AB7',borderRadius:3}}/></div>}
           {pots.map(pot=>(
-            <div key={pot.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
-              <div style={{width:28,height:28,borderRadius:'50%',background:ha(pot.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:11,fontWeight:600,color:pot.color}}>{pot.name[0]}</span></div>
+            <div key={pot.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              <div style={{width:26,height:26,borderRadius:'50%',background:ha(pot.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:11,fontWeight:600,color:pot.color}}>{pot.name[0]}</span></div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:3}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:13}}>
                   <span style={{fontWeight:500}}>{pot.name}</span>
-                  <span style={{color:pot.color,fontWeight:600}}>{fmt(pot.current_amount)}{pot.target_amount>0&&<span style={{color:'var(--color-muted)',fontWeight:400}}> / {fmt(pot.target_amount)}</span>}</span>
+                  <span style={{color:pot.color,fontWeight:600}}>{fmt(pot.current_amount)}</span>
                 </div>
-                {pot.target_amount>0&&<div style={{height:5,background:'var(--color-bg)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${pct(pot.current_amount,pot.target_amount)}%`,background:pot.color,borderRadius:3}}/></div>}
               </div>
             </div>
           ))}
-          <button onClick={()=>setView('pots')} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)',fontSize:13}}>Voir tous les pots →</button>
+          <button onClick={()=>setView('pots')} style={{width:'100%',marginTop:8,padding:'7px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)',fontSize:13}}>Voir tous les pots →</button>
         </div>)}
 
         {/* Graphique */}
@@ -410,7 +484,7 @@ export default function App() {
           </div>
         </div>)}
 
-        {/* Résumé catégories */}
+        {/* Résumé catégories cliquables */}
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600,marginBottom:14}}>Résumé par catégorie</div>
           {categories.revenus.filter(c=>revBycat[c.id]).length===0&&categories.depenses.filter(c=>depBycat[c.id]).length===0&&<div style={{fontSize:13,color:'var(--color-muted)'}}>Aucune transaction ce mois-ci.</div>}
@@ -418,10 +492,11 @@ export default function App() {
             <div style={{fontSize:11,fontWeight:600,color:'#1D9E75',marginBottom:8,textTransform:'uppercase',letterSpacing:'.5px'}}>Revenus</div>
             {categories.revenus.filter(c=>revBycat[c.id]).map(cat=>{
               const v=revBycat[cat.id]||0;const maxV=Math.max(...categories.revenus.map(c=>revBycat[c.id]||0),1);
-              return(<div key={cat.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              return(<div key={cat.id} onClick={()=>setSelectedCat(cat)} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8,cursor:'pointer',borderRadius:10,padding:'4px',transition:'background .1s'}} onMouseEnter={e=>e.currentTarget.style.background=ha(cat.color,.05)} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                 <div style={{width:28,height:28,borderRadius:'50%',background:ha(cat.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:11,fontWeight:600,color:cat.color}}>{cat.name[0]}</span></div>
                 <div style={{flex:1}}><div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:3}}><span style={{fontWeight:500}}>{cat.name}</span><span style={{color:'#1D9E75',fontWeight:600}}>{fmt(v)}</span></div>
                 <div style={{height:5,background:'var(--color-bg)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${Math.round((v/maxV)*100)}%`,background:'#1D9E75',borderRadius:3}}/></div></div>
+                <span style={{fontSize:12,color:'var(--color-muted)'}}>›</span>
               </div>);
             })}
           </div>)}
@@ -430,7 +505,7 @@ export default function App() {
             {categories.depenses.filter(c=>depBycat[c.id]).map(cat=>{
               const spent=depBycat[cat.id]||0;const env=envelopeWithCarry[cat.id];const budget=env?.total||0;const over=budget>0&&spent>budget;const p=pct(spent,budget);
               const maxV=Math.max(...categories.depenses.map(c=>depBycat[c.id]||0),1);
-              return(<div key={cat.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+              return(<div key={cat.id} onClick={()=>setSelectedCat(cat)} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,cursor:'pointer',borderRadius:10,padding:'4px'}} onMouseEnter={e=>e.currentTarget.style.background=ha(cat.color,.05)} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                 <div style={{width:28,height:28,borderRadius:'50%',background:ha(cat.color,.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:11,fontWeight:600,color:cat.color}}>{cat.name[0]}</span></div>
                 <div style={{flex:1}}>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:3}}>
@@ -440,6 +515,7 @@ export default function App() {
                   <div style={{height:5,background:'var(--color-bg)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${budget>0?p:Math.round((spent/maxV)*100)}%`,background:over?'#D85A30':p>80?'#BA7517':cat.color,borderRadius:3}}/></div>
                   {budget>0&&<div style={{fontSize:10,color:over?'#D85A30':'var(--color-muted)',marginTop:1}}>{over?`Dépassé de ${fmt(spent-budget)}`:`Reste ${fmt(budget-spent)}`}</div>}
                 </div>
+                <span style={{fontSize:12,color:'var(--color-muted)'}}>›</span>
               </div>);
             })}
           </div>)}
@@ -455,14 +531,38 @@ export default function App() {
         </div>
       </div>)}
 
+      {/* ===== DÉTAIL CATÉGORIE ===== */}
+      {view==='accueil'&&selectedCat&&(<div>
+        <button onClick={()=>setSelectedCat(null)} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 12px',borderRadius:20,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)',fontSize:13,marginBottom:16}}>← Retour</button>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+          <div style={{width:40,height:40,borderRadius:'50%',background:ha(selectedCat.color,.15),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:18,color:selectedCat.color}}>{selectedCat.name[0]}</div>
+          <div>
+            <div style={{fontSize:18,fontWeight:600}}>{selectedCat.name}</div>
+            <div style={{fontSize:12,color:'var(--color-muted)'}}>{MS[filterMonth]} {filterYear} · {catTx.length} transaction{catTx.length!==1?'s':''}</div>
+          </div>
+        </div>
+        <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1rem',marginBottom:14}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+            <span style={{fontSize:13,color:'var(--color-muted)'}}>Total</span>
+            <span style={{fontSize:16,fontWeight:600,color:selectedCat.color}}>{fmt(catTx.reduce((s,t)=>s+t.montant,0))}</span>
+          </div>
+          {envelopes[selectedCat.id]>0&&<div style={{display:'flex',justifyContent:'space-between'}}>
+            <span style={{fontSize:13,color:'var(--color-muted)'}}>Budget</span>
+            <span style={{fontSize:13,fontWeight:500}}>{fmt(envelopes[selectedCat.id])}/mois</span>
+          </div>}
+        </div>
+        {catTx.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucune transaction ce mois-ci.</div>}
+        {[...catTx].sort((a,b)=>b.date.localeCompare(a.date)).map(t=>(
+          <TxRow key={t.id} tx={{id:t.id,source:'tx',date:t.date,label:t.description||getCatName(t.categorie),sublabel:getCatName(t.categorie),amount:t.montant,isPlus:t.type==='revenus',color:selectedCat.color,validated:t.validated,is_recurring:t.is_recurring,categorie:t.categorie}}/>
+        ))}
+      </div>)}
+
       {/* ===== ÉPARGNE ===== */}
       {view==='epargne'&&(<div>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
           <div style={{fontSize:14,fontWeight:600}}>Comptes épargne</div>
-          <button onClick={()=>{setSavingForm({name:'',color:'#1D9E75',current_amount:''});setSavingModal('new');}} style={{padding:'6px 14px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:600,fontSize:13}}>+ Nouveau compte</button>
+          <button onClick={()=>{setSavingForm({name:'',color:'#1D9E75',current_amount:''});setSavingModal('new');}} style={{padding:'6px 14px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:600,fontSize:13}}>+ Nouveau</button>
         </div>
-
-        {/* Total épargne */}
         {savings.length>0&&(<div style={{background:ha('#1D9E75',.08),border:`1px solid ${ha('#1D9E75',.2)}`,borderRadius:14,padding:'1rem',marginBottom:14}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <span style={{fontSize:13,fontWeight:600,color:'#1D9E75'}}>Total épargne</span>
@@ -470,9 +570,7 @@ export default function App() {
           </div>
           <div style={{fontSize:11,color:'var(--color-muted)',marginTop:4}}>Solde indépendant du budget mensuel</div>
         </div>)}
-
-        {savings.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucun compte épargne. Crée ton premier compte !</div>}
-
+        {savings.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucun compte épargne créé.</div>}
         {savings.map(sv=>{
           const txList=savingsTx.filter(t=>t.saving_id===sv.id).slice(0,4);
           const mVersements=filteredSavTx.filter(t=>t.saving_id===sv.id&&t.type==='versement').reduce((s,t)=>s+t.amount,0);
@@ -519,7 +617,7 @@ export default function App() {
             <span style={{fontSize:18,fontWeight:600,color:'#534AB7'}}>{fmt(totalPots)}</span>
           </div>
           {totalPotsTarget>0&&<><div style={{height:7,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:6}}><div style={{height:'100%',width:`${pct(totalPots,totalPotsTarget)}%`,background:'#534AB7',borderRadius:3}}/></div>
-          <div style={{fontSize:12,color:'var(--color-muted)'}}>Objectif total : {fmt(totalPotsTarget)} · {pct(totalPots,totalPotsTarget)}% atteint</div></>}
+          <div style={{fontSize:12,color:'var(--color-muted)'}}>Objectif : {fmt(totalPotsTarget)} · {pct(totalPots,totalPotsTarget)}% atteint</div></>}
         </div>)}
         {pots.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucun pot créé.</div>}
         {pots.map(pot=>{
@@ -537,7 +635,7 @@ export default function App() {
                 <button onClick={()=>setDeletePotId(pot.id)} style={{width:26,height:26,borderRadius:'50%',border:'0.5px solid var(--color-border)',background:'var(--color-bg)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:'#D85A30'}}>🗑</button>
               </div>
             </div>
-            {pot.target_amount>0&&(<div style={{marginBottom:10}}><div style={{height:7,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:4}}><div style={{height:'100%',width:`${p}%`,background:pot.color,borderRadius:3}}/></div><div style={{fontSize:11,color:'var(--color-muted)'}}>{p}% atteint · Reste {fmt(pot.target_amount-pot.current_amount)}</div></div>)}
+            {pot.target_amount>0&&(<div style={{marginBottom:10}}><div style={{height:7,background:'var(--color-bg)',borderRadius:3,overflow:'hidden',marginBottom:4}}><div style={{height:'100%',width:`${p}%`,background:pot.color,borderRadius:3}}/></div><div style={{fontSize:11,color:'var(--color-muted)'}}>{p}% · Reste {fmt(pot.target_amount-pot.current_amount)}</div></div>)}
             <div style={{display:'flex',gap:8,marginBottom:txList.length>0?10:0}}>
               <button onClick={()=>{setPotTxForm({type:'depot',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});setPotTxModal(pot);}} style={{flex:1,padding:'8px',borderRadius:10,border:'1.5px solid #1D9E75',background:ha('#1D9E75',.1),color:'#1D9E75',cursor:'pointer',fontWeight:500,fontSize:13}}>+ Dépôt</button>
               <button onClick={()=>{setPotTxForm({type:'retrait',amount:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});setPotTxModal(pot);}} style={{flex:1,padding:'8px',borderRadius:10,border:'1.5px solid #D85A30',background:ha('#D85A30',.1),color:'#D85A30',cursor:'pointer',fontWeight:500,fontSize:13}}>- Retrait</button>
@@ -597,35 +695,24 @@ export default function App() {
         </div>
       </div>)}
 
-      {/* ===== LISTE ===== */}
+      {/* ===== LISTE UNIFIÉE ===== */}
       {view==='liste'&&(<div>
-        <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:12}}>{filtered.length} transaction{filtered.length!==1?'s':''} — {MS[filterMonth]} {filterYear}</div>
-        {filtered.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucune transaction pour cette période.</div>}
-        {[...filtered].sort((a,b)=>b.date.localeCompare(a.date)).map(t=>(
-          <div key={t.id} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 0',borderBottom:'0.5px solid var(--color-border)'}}>
-            <div style={{width:38,height:38,borderRadius:'50%',background:ha(getCatColor(t.categorie),.15),display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-              <span style={{fontSize:13,fontWeight:600,color:getCatColor(t.categorie)}}>{(getCatName(t.categorie)||'?')[0]}</span>
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <div style={{fontSize:14,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.description||getCatName(t.categorie)}</div>
-                {t.is_recurring&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:ha('#534AB7',.1),color:'#534AB7',flexShrink:0}}>🔄</span>}
-              </div>
-              <div style={{fontSize:12,color:'var(--color-muted)'}}>{getCatName(t.categorie)} · {new Date(t.date).toLocaleDateString('fr-FR')}</div>
-            </div>
-            <div style={{fontWeight:600,fontSize:15,color:t.type==='revenus'?'#1D9E75':'#D85A30',flexShrink:0}}>{t.type==='revenus'?'+':'-'}{fmt(t.montant)}</div>
-            <div style={{display:'flex',gap:4,flexShrink:0}}>
-              <button onClick={()=>startEdit(t)} style={{padding:'4px 8px',fontSize:12,borderRadius:6,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>✏️</button>
-              <button onClick={()=>setDeleteId(t.id)} style={{padding:'4px 8px',fontSize:12,borderRadius:6,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'#D85A30'}}>🗑</button>
-            </div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,color:'var(--color-muted)'}}>{displayedTx.length} mouvement{displayedTx.length!==1?'s':''}</div>
+          <div style={{display:'flex',gap:6}}>
+            {[['all','Tous'],['pending','En attente'],['validated','Validés']].map(([k,l])=>(
+              <button key={k} onClick={()=>setFilterValidated(k)} style={{padding:'4px 10px',borderRadius:20,border:`1px solid ${filterValidated===k?'#534AB7':'var(--color-border)'}`,background:filterValidated===k?ha('#534AB7',.1):'transparent',color:filterValidated===k?'#534AB7':'var(--color-muted)',cursor:'pointer',fontSize:11,fontWeight:filterValidated===k?500:400}}>{l}</button>
+            ))}
           </div>
-        ))}
+        </div>
+        {displayedTx.length===0&&<div style={{textAlign:'center',padding:'2rem',color:'var(--color-muted)',fontSize:14}}>Aucune transaction pour cette période.</div>}
+        {displayedTx.map(tx=><TxRow key={`${tx.source}-${tx.id}`} tx={tx}/>)}
       </div>)}
 
       {/* ===== SAISIE ===== */}
       {view==='saisie'&&(
         <div style={{background:'var(--color-card)',border:'0.5px solid var(--color-border)',borderRadius:14,padding:'1.25rem'}}>
-          <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{editId?'Modifier la transaction':'Nouvelle transaction'}</div>
+          <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{editId?'Modifier':'Nouvelle transaction'}</div>
           <div style={{marginBottom:14}}>
             <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Type</div>
             <div style={{display:'flex',gap:8}}>
@@ -647,10 +734,10 @@ export default function App() {
             <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Montant (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={form.montant} onChange={e=>setForm(f=>({...f,montant:e.target.value}))} style={inp}/></div>
             <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Date</div><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
           </div>
-          <div style={{marginBottom:14}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Courses Aldi, Loyer…" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
+          <div style={{marginBottom:14}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Courses, Loyer…" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
           <div style={{marginBottom:20,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:'var(--color-bg)',border:'0.5px solid var(--color-border)'}}>
             <input type="checkbox" id="recurring" checked={form.is_recurring} onChange={e=>setForm(f=>({...f,is_recurring:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}}/>
-            <label htmlFor="recurring" style={{fontSize:13,cursor:'pointer',flex:1}}>🔄 Transaction récurrente</label>
+            <label htmlFor="recurring" style={{fontSize:13,cursor:'pointer',flex:1}}>🔄 Récurrente</label>
             {form.is_recurring&&<div style={{display:'flex',alignItems:'center',gap:6}}>
               <span style={{fontSize:12,color:'var(--color-muted)'}}>Jour :</span>
               <input type="number" min="1" max="31" value={form.recurring_day} onChange={e=>setForm(f=>({...f,recurring_day:e.target.value}))} style={{width:50,padding:'4px 8px',borderRadius:8,border:'1px solid var(--color-border)',fontSize:13,background:'var(--color-bg)',color:'var(--color-text)'}}/>
@@ -663,17 +750,14 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal épargne nouveau/edit */}
+      {/* Modal épargne */}
       {savingModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setSavingModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{savingModal==='new'?'Nouveau compte épargne':'Modifier le compte'}</div>
-            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Nom du compte</div><input type="text" placeholder="Ex. Livret A, PEL…" value={savingForm.name} onChange={e=>setSavingForm(f=>({...f,name:e.target.value}))} style={inp} autoFocus/></div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{savingModal==='new'?'Nouveau compte épargne':'Modifier'}</div>
+            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Nom</div><input type="text" placeholder="Ex. Livret A, PEL…" value={savingForm.name} onChange={e=>setSavingForm(f=>({...f,name:e.target.value}))} style={inp} autoFocus/></div>
             <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Solde actuel (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={savingForm.current_amount} onChange={e=>setSavingForm(f=>({...f,current_amount:e.target.value}))} style={inp}/></div>
-            <div style={{marginBottom:16}}>
-              <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:8}}>Couleur</div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>{PALETTE.map(c=><div key={c} onClick={()=>setSavingForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:savingForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}</div>
-            </div>
+            <div style={{marginBottom:16}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:8}}>Couleur</div><div style={{display:'flex',flexWrap:'wrap',gap:8}}>{PALETTE.map(c=><div key={c} onClick={()=>setSavingForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:savingForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}</div></div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={saveSaving} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#1D9E75',color:'#fff',cursor:'pointer',fontWeight:600}}>Enregistrer</button>
               <button onClick={()=>setSavingModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
@@ -697,22 +781,14 @@ export default function App() {
               <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Montant (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={savingTxForm.amount} onChange={e=>setSavingTxForm(f=>({...f,amount:e.target.value}))} style={inp} autoFocus/></div>
               <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Date</div><input type="date" value={savingTxForm.date} onChange={e=>setSavingTxForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
             </div>
-            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Virement mensuel…" value={savingTxForm.description} onChange={e=>setSavingTxForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
-
-            {/* Option versement impact budget */}
-            {savingTxForm.type==='versement'&&(
-              <div style={{marginBottom:14,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:ha('#D85A30',.05),border:'0.5px solid var(--color-border)'}}>
-                <input type="checkbox" id="impactBudget" checked={true} readOnly style={{width:16,height:16}}/>
-                <label htmlFor="impactBudget" style={{fontSize:13,flex:1,color:'var(--color-muted)'}}>💸 Défalqué du solde du mois</label>
-              </div>
-            )}
-            {savingTxForm.type==='retrait'&&(
-              <div style={{marginBottom:14,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:ha('#1D9E75',.05),border:'0.5px solid var(--color-border)'}}>
-                <input type="checkbox" id="creditMonth" checked={savingTxForm.credit_month} onChange={e=>setSavingTxForm(f=>({...f,credit_month:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}}/>
-                <label htmlFor="creditMonth" style={{fontSize:13,cursor:'pointer',flex:1}}>💰 Créditer le solde du mois</label>
-              </div>
-            )}
-
+            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Virement…" value={savingTxForm.description} onChange={e=>setSavingTxForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
+            {savingTxForm.type==='versement'&&(<div style={{marginBottom:14,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:ha('#D85A30',.05),border:'0.5px solid var(--color-border)'}}>
+              <span style={{fontSize:18}}>💸</span><span style={{fontSize:13,color:'var(--color-muted)',flex:1}}>Sera défalqué du solde du mois</span>
+            </div>)}
+            {savingTxForm.type==='retrait'&&(<div style={{marginBottom:14,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:ha('#1D9E75',.05),border:'0.5px solid var(--color-border)'}}>
+              <input type="checkbox" id="creditMonth" checked={savingTxForm.credit_month} onChange={e=>setSavingTxForm(f=>({...f,credit_month:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}}/>
+              <label htmlFor="creditMonth" style={{fontSize:13,cursor:'pointer',flex:1}}>💰 Créditer le solde du mois</label>
+            </div>)}
             <div style={{display:'flex',gap:8}}>
               <button onClick={saveSavingTx} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:savingTxForm.type==='versement'?'#1D9E75':'#D85A30',color:'#fff',cursor:'pointer',fontWeight:600}}>Confirmer</button>
               <button onClick={()=>setSavingTxModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
@@ -721,20 +797,17 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal pot nouveau/edit */}
+      {/* Modal pot */}
       {potModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setPotModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{potModal==='new'?'Nouveau pot':'Modifier le pot'}</div>
-            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Nom du pot</div><input type="text" placeholder="Ex. Vacances, Voiture…" value={potForm.name} onChange={e=>setPotForm(f=>({...f,name:e.target.value}))} style={inp} autoFocus/></div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>{potModal==='new'?'Nouveau pot':'Modifier'}</div>
+            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Nom</div><input type="text" placeholder="Ex. Vacances…" value={potForm.name} onChange={e=>setPotForm(f=>({...f,name:e.target.value}))} style={inp} autoFocus/></div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-              <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Solde actuel (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potForm.current_amount} onChange={e=>setPotForm(f=>({...f,current_amount:e.target.value}))} style={inp}/></div>
+              <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Solde (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potForm.current_amount} onChange={e=>setPotForm(f=>({...f,current_amount:e.target.value}))} style={inp}/></div>
               <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Objectif (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potForm.target_amount} onChange={e=>setPotForm(f=>({...f,target_amount:e.target.value}))} style={inp}/></div>
             </div>
-            <div style={{marginBottom:16}}>
-              <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:8}}>Couleur</div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>{PALETTE.map(c=><div key={c} onClick={()=>setPotForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:potForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}</div>
-            </div>
+            <div style={{marginBottom:16}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:8}}>Couleur</div><div style={{display:'flex',flexWrap:'wrap',gap:8}}>{PALETTE.map(c=><div key={c} onClick={()=>setPotForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:potForm.color===c?'3px solid var(--color-text)':'3px solid transparent'}}/>)}</div></div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={savePot} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#534AB7',color:'#fff',cursor:'pointer',fontWeight:600}}>Enregistrer</button>
               <button onClick={()=>setPotModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
@@ -747,8 +820,8 @@ export default function App() {
       {potTxModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:999}} onClick={()=>setPotTxModal(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>Mouvement — {potTxModal.name}</div>
-            <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:16}}>Solde actuel : {fmt(potTxModal.current_amount)}</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>{potTxModal.name}</div>
+            <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:16}}>Solde : {fmt(potTxModal.current_amount)}</div>
             <div style={{display:'flex',gap:8,marginBottom:14}}>
               {[['depot','+ Dépôt','#1D9E75'],['retrait','- Retrait','#D85A30']].map(([k,l,c])=>(
                 <button key={k} onClick={()=>setPotTxForm(f=>({...f,type:k}))} style={{flex:1,padding:'9px',borderRadius:10,border:`1.5px solid ${potTxForm.type===k?c:'var(--color-border)'}`,background:potTxForm.type===k?ha(c,.1):'transparent',color:potTxForm.type===k?c:'var(--color-muted)',cursor:'pointer',fontWeight:potTxForm.type===k?600:400}}>{l}</button>
@@ -758,15 +831,7 @@ export default function App() {
               <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Montant (€)</div><input type="number" min="0" step="0.01" placeholder="0.00" value={potTxForm.amount} onChange={e=>setPotTxForm(f=>({...f,amount:e.target.value}))} style={inp} autoFocus/></div>
               <div><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Date</div><input type="date" value={potTxForm.date} onChange={e=>setPotTxForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
             </div>
-            <div style={{marginBottom:12}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Virement mensuel…" value={potTxForm.description} onChange={e=>setPotTxForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
-            <div style={{marginBottom:16,display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:'var(--color-bg)',border:'0.5px solid var(--color-border)'}}>
-              <input type="checkbox" id="potRecurring" checked={potTxForm.is_recurring} onChange={e=>setPotTxForm(f=>({...f,is_recurring:e.target.checked}))} style={{width:16,height:16,cursor:'pointer'}}/>
-              <label htmlFor="potRecurring" style={{fontSize:13,cursor:'pointer',flex:1}}>🔄 Mouvement récurrent</label>
-              {potTxForm.is_recurring&&<div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{fontSize:12,color:'var(--color-muted)'}}>Jour :</span>
-                <input type="number" min="1" max="31" value={potTxForm.recurring_day} onChange={e=>setPotTxForm(f=>({...f,recurring_day:e.target.value}))} style={{width:50,padding:'4px 8px',borderRadius:8,border:'1px solid var(--color-border)',fontSize:13,background:'var(--color-bg)',color:'var(--color-text)'}}/>
-              </div>}
-            </div>
+            <div style={{marginBottom:16}}><div style={{fontSize:13,color:'var(--color-muted)',marginBottom:6}}>Description (optionnel)</div><input type="text" placeholder="Ex. Virement…" value={potTxForm.description} onChange={e=>setPotTxForm(f=>({...f,description:e.target.value}))} style={inp}/></div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={savePotTx} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:potTxForm.type==='depot'?'#1D9E75':'#D85A30',color:'#fff',cursor:'pointer',fontWeight:600}}>Confirmer</button>
               <button onClick={()=>setPotTxModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
@@ -781,7 +846,7 @@ export default function App() {
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--color-card)',borderRadius:'20px 20px 0 0',padding:'1.5rem',width:'100%',maxWidth:480}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>Nouvelle catégorie</div>
             <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:16}}>Type : <strong>{newCatModal==='revenus'?'Revenu':'Dépense'}</strong></div>
-            <input type="text" placeholder="Nom de la catégorie" value={newCatName} onChange={e=>{setNewCatName(e.target.value);setNewCatErr('');}} style={{...inp,marginBottom:6}} onKeyDown={e=>e.key==='Enter'&&confirmNewCat()} autoFocus/>
+            <input type="text" placeholder="Nom" value={newCatName} onChange={e=>{setNewCatName(e.target.value);setNewCatErr('');}} style={{...inp,marginBottom:6}} onKeyDown={e=>e.key==='Enter'&&confirmNewCat()} autoFocus/>
             {newCatErr&&<div style={{fontSize:12,color:'#D85A30',marginBottom:8}}>{newCatErr}</div>}
             <div style={{display:'flex',gap:8,marginTop:12}}>
               <button onClick={confirmNewCat} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#534AB7',color:'#fff',cursor:'pointer',fontWeight:600}}>Créer</button>
@@ -796,7 +861,7 @@ export default function App() {
             <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>Enveloppe mensuelle</div>
             <div style={{fontSize:13,color:'var(--color-muted)',marginBottom:16}}>Catégorie : <strong>{getCatName(envModal)}</strong></div>
             <input type="number" min="0" step="1" placeholder="Ex. 300" value={envValue} onChange={e=>setEnvValue(e.target.value)} style={{...inp,marginBottom:6}} onKeyDown={e=>e.key==='Enter'&&saveEnvelope()} autoFocus/>
-            <div style={{fontSize:12,color:'var(--color-muted)',marginBottom:16}}>Laissez vide pour supprimer l'enveloppe.</div>
+            <div style={{fontSize:12,color:'var(--color-muted)',marginBottom:16}}>Laissez vide pour supprimer.</div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={saveEnvelope} style={{flex:1,padding:'11px',borderRadius:10,border:'none',background:'#534AB7',color:'#fff',cursor:'pointer',fontWeight:600}}>Enregistrer</button>
               <button onClick={()=>setEnvModal(null)} style={{flex:1,padding:'11px',borderRadius:10,border:'0.5px solid var(--color-border)',background:'transparent',cursor:'pointer',color:'var(--color-muted)'}}>Annuler</button>
