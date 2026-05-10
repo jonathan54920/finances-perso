@@ -68,9 +68,26 @@ export default function App() {
   const [savingsTx,setSavingsTx]=useState([]);
   const [loading,setLoading]=useState(true);
 
-  const [view,setView]=useState('accueil');
+  const [view,setViewRaw]=useState('accueil');
   const [filterMonth,setFilterMonth]=useState(new Date().getMonth());
   const [filterYear,setFilterYear]=useState(new Date().getFullYear());
+
+  // Gestion bouton retour mobile
+  function setView(v){
+    if(v!==view) window.history.pushState({view:v},'',window.location.pathname);
+    setViewRaw(v);
+  }
+  useEffect(()=>{
+    function onPop(e){
+      const v=e.state?.view||'accueil';
+      setViewRaw(v);
+      if(v==='accueil') setSelectedCat(null);
+    }
+    window.history.replaceState({view:'accueil'},'',window.location.pathname);
+    window.addEventListener('popstate',onPop);
+    return()=>window.removeEventListener('popstate',onPop);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
   const [filterValidated,setFilterValidated]=useState('all'); // all | validated | pending
   const [selectedCat,setSelectedCat]=useState(null);
   const [form,setForm]=useState({type:'depenses',categorie:'',montant:'',description:'',date:new Date().toISOString().slice(0,10),is_recurring:false,recurring_day:1});
@@ -382,12 +399,16 @@ export default function App() {
         {[['accueil','🏠'],['epargne','💰 Épargne'],['pots','🏦 Pots'],['categories','📊 Catégories'],['liste','📋 Transactions']].map(([k,l])=>pill(l,view===k,()=>{setView(k);setSelectedCat(null);}))}
       </div>
 
-      {/* Filtre période */}
+      {/* Filtre période — listes déroulantes */}
       {view!=='saisie'&&(
-        <div style={{display:'flex',gap:5,marginBottom:18,flexWrap:'wrap',alignItems:'center'}}>
-          <span style={{fontSize:11,color:'var(--color-muted)'}}>Période :</span>
-          {MS.map((m,i)=>pill(m,filterMonth===i,()=>setFilterMonth(i),'#378ADD'))}
-          {years.map(y=>pill(String(y),filterYear===y,()=>setFilterYear(y),'#888780'))}
+        <div style={{display:'flex',gap:8,marginBottom:18,alignItems:'center'}}>
+          <span style={{fontSize:11,color:'var(--color-muted)',flexShrink:0}}>Période :</span>
+          <select value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))} style={{flex:1,padding:'7px 10px',borderRadius:10,border:'1px solid var(--color-border)',fontSize:13,background:'var(--color-bg)',color:'var(--color-text)',cursor:'pointer'}}>
+            {MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}
+          </select>
+          <select value={filterYear} onChange={e=>setFilterYear(Number(e.target.value))} style={{width:90,padding:'7px 10px',borderRadius:10,border:'1px solid var(--color-border)',fontSize:13,background:'var(--color-bg)',color:'var(--color-text)',cursor:'pointer'}}>
+            {Array.from({length:2099-2020+1},(_,i)=>2020+i).map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
         </div>
       )}
 
